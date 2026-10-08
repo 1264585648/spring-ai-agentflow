@@ -1,4 +1,4 @@
-# 警惕 ForkJoinPool 陷阱：为什么 CompletableFuture 必须指定隔离线程池？
+# 警惕 ForkJoinPool 饥饿：为什么 CompletableFuture 必须指定专用线程池？
 
 > **所属专栏**：Java 高并发与工程底座避坑手册 (`docs/java-engineering/`)  
 > **核心标签**：`Java并发` `CompletableFuture` `ForkJoinPool` `线程池隔离` `舱壁模式`

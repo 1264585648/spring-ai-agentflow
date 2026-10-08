@@ -1,4 +1,4 @@
-# Human-in-the-loop 防线：为什么交互卡片必须有 actionId 与只读锁？
+# Human-in-the-loop 防线：为什么不能让大模型直接拥有“系统写权限”？
 
 > **所属专栏**：企业级 Multi-Agent 架构实战手册  
 > **核心标签**：`人机协同` `Human-in-the-loop` `幂等性` `数据安全` `卡片协议`

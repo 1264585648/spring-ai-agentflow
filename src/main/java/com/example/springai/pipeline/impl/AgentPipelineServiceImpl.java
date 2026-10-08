@@ -26,14 +26,17 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
 
     private final SseEventPublisher ssePublisher;
     private final L1RuleMatcher l1RuleMatcher;
+    private final com.example.springai.pipeline.dispatcher.L1ToolDispatcher l1ToolDispatcher;
     private final java.util.concurrent.Executor pipelineExecutor;
 
     public AgentPipelineServiceImpl(
             SseEventPublisher ssePublisher,
             L1RuleMatcher l1RuleMatcher,
+            com.example.springai.pipeline.dispatcher.L1ToolDispatcher l1ToolDispatcher,
             @org.springframework.beans.factory.annotation.Qualifier("agentPipelineExecutor") java.util.concurrent.Executor pipelineExecutor) {
         this.ssePublisher = ssePublisher;
         this.l1RuleMatcher = l1RuleMatcher;
+        this.l1ToolDispatcher = l1ToolDispatcher;
         this.pipelineExecutor = pipelineExecutor;
     }
 
@@ -48,16 +51,30 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
             try {
                 // 🚀 【L1 规则匹配前置拦截】: <30ms 极速检查高频指令或固定问答
                 IntentMatchResult l1Result = l1RuleMatcher.match(query);
-                if (l1Result.isMatched() && l1Result.getDirectReply() != null) {
-                    log.info("[Pipeline] 命中 L1 规则直出，会话: {}, 意图: {}", sessionId, l1Result.getTargetIntent());
-                    ssePublisher.sendProgress(sessionId, "L1_HIT", "已命中 L1 高频规则库，极速响应");
+                if (l1Result.isMatched()) {
+                    if ("STATIC_TEXT".equalsIgnoreCase(l1Result.getTargetType()) && l1Result.getDirectReply() != null) {
+                        log.info("[Pipeline] 命中 L1 静态指令直出，会话: {}, 规则: {}", sessionId, l1Result.getRuleCode());
+                        ssePublisher.sendProgress(sessionId, "L1_HIT", "已命中 L1 快捷指令，毫秒级直出");
 
-                    for (char c : l1Result.getDirectReply().toCharArray()) {
-                        ssePublisher.sendMessage(sessionId, String.valueOf(c));
-                        Thread.sleep(10);
+                        for (char c : l1Result.getDirectReply().toCharArray()) {
+                            ssePublisher.sendMessage(sessionId, String.valueOf(c));
+                            Thread.sleep(10);
+                        }
+                        ssePublisher.sendDone(sessionId);
+                        return; // 直接返回，彻底避免进入大模型推理！
+                    } else if ("TOOL".equalsIgnoreCase(l1Result.getTargetType())) {
+                        log.info("[Pipeline] 命中 L1 工具直通，会话: {}, 目标: {}, 参数: {}",
+                                sessionId, l1Result.getTargetRef(), l1Result.getExtractedParams());
+                        ssePublisher.sendProgress(sessionId, "L1_TOOL", "已命中命令直通，正在调度工具: " + l1Result.getTargetRef());
+
+                        String toolResult = l1ToolDispatcher.dispatch(l1Result.getTargetRef(), l1Result.getExtractedParams());
+                        for (char c : toolResult.toCharArray()) {
+                            ssePublisher.sendMessage(sessionId, String.valueOf(c));
+                            Thread.sleep(10);
+                        }
+                        ssePublisher.sendDone(sessionId);
+                        return; // 零大模型调用，直接完结！
                     }
-                    ssePublisher.sendDone(sessionId);
-                    return; // 直接返回，彻底避免进入大模型推理！
                 }
 
                 // 若未命中 L1，平滑放行至大模型分析与业务流程

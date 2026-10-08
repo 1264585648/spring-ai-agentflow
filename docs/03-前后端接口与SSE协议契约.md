@@ -1,8 +1,8 @@
-# 催收答疑机器人：前后端接口与 SSE 事件流协议契约规范
+# 前后端通信协议与 SSE 事件流交互契约规范
 
 ## 1. 文档概述
 
-本文档定义了催收域智能答疑机器人在**接入层（Access Layer）**的前后端交互规范。系统采用 **HTTP REST + Server-Sent Events (SSE)** 双向/流式交互模式：
+本文档定义了智能答疑与人机协同系统在**接入层（Access Layer）**的前后端交互规范。系统采用 **HTTP REST + Server-Sent Events (SSE)** 双向/流式交互模式：
 - **下行通道 (Server ➔ Client)**：通过 SSE 单向长连接，实时推送大模型思考链 (`thinking`)、打字机文字块 (`message`)、工具调用进度 (`progress`)、方案确认卡片 (`bpm_confirm_card`) 以及后续推荐问题 (`recommend_questions`)。
 - **上行通道 (Client ➔ Server)**：通过标准 HTTP POST 发送催收员提问，并在催收员核验方案后提交工单数据。
 

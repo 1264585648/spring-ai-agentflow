@@ -3,9 +3,9 @@ spring:
     name: spring-ai-agent
 
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:spring_ai_agent}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:root}
+    url: jdbc:mysql://${MYSQL_HOST:fat-31.mysql.ppdaidb.com}:${MYSQL_PORT:7406}/${MYSQL_DB:ppdai_dd_agent}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:user_dd_agent}
+    password: ${MYSQL_PASSWORD:gB9ODG0_2n3OjF0p}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
@@ -22,7 +22,26 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        dialect: org.hibernate.dialect.MySQLDialect
 
   ai:
     openai:
       api-key: ${OPENAI_API_KEY}
+
+# ===================================================================
+# Apollo 分布式配置中心配置 (多 Pod 集群部署选配)
+# 说明:
+# 1. 本地单机/CI 环境: enabled 保持 false，依赖 JVM 内部 Spring Event 与启动预热即可；
+# 2. 线上多节点集群环境: 开启 enabled: true，所有 Pod 自动接入 HTTP 长轮询广播，毫秒级同步最新规则。
+# ===================================================================
+app:
+  id: spring-ai-agent
+
+apollo:
+  bootstrap:
+    enabled: ${APOLLO_BOOTSTRAP_ENABLED:false}
+    namespaces: application,agent.l1.rules
+  meta: ${APOLLO_META:http://apconfig.ppdaicorp.com}
+  rules:
+    namespace: ${APOLLO_RULES_NAMESPACE:agent.l1.rules}
+
