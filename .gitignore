@@ -40,3 +40,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env.local
 *.log
+
+# Local Config & Secrets (Never commit to Git)
+*-local.yml
+application-local.yml
+.env
+.env.*

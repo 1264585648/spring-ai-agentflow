@@ -13,7 +13,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.Map;
 
 /**
- * 接入层: 催收答疑对话接入控制器 (ChatController)
+ * 接入层: 智能业务答疑对话接入控制器 (ChatController)
  * 职责: 鉴权校验 ➔ 建立 SSE 长连接 ➔ 接收提问 ➔ 触发 Pipeline 流水线
  */
 @RestController

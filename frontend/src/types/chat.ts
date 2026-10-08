@@ -62,3 +62,17 @@ export interface ChatMessage {
   recommendQuestions?: string[];
   timestamp: number;
 }
+
+/**
+ * 快捷指令面板项模型
+ */
+export interface CommandPaletteItem {
+  code: string;
+  prefix: string;
+  name: string;
+  template: string;
+  description: string;
+  targetType: string;
+  icon: string;
+}
+

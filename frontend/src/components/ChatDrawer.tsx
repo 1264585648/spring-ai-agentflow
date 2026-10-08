@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChatMessage, SseEventType } from '../types/chat';
+import { ChatMessage, SseEventType, CommandPaletteItem } from '../types/chat';
 import { chatClient } from '../api/sseClient';
 import { ThinkingPanel } from './ThinkingPanel';
 import { InteractiveCard } from './InteractiveCard';
 import { QuestionChips } from './QuestionChips';
-import { MessageSquareText, Send, X, RefreshCw, Bot, User, ShieldAlert } from 'lucide-react';
+import { CommandPalette } from './CommandPalette';
+import { MessageSquareText, Send, X, RefreshCw, Bot, User, ShieldAlert, Zap } from 'lucide-react';
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -18,8 +19,26 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [currentProgress, setCurrentProgress] = useState<string | null>(null);
 
+  // 斜杠快捷指令面板状态
+  const [paletteCommands, setPaletteCommands] = useState<CommandPaletteItem[]>([]);
+  const [showPalette, setShowPalette] = useState<boolean>(false);
+  const [paletteSelectedIndex, setPaletteSelectedIndex] = useState<number>(0);
+
   const sessionIdRef = useRef<string>('sess_' + Date.now());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // 初始化加载全量可用快捷指令清单
+  useEffect(() => {
+    chatClient
+      .getCommandPalette()
+      .then((cmds) => {
+        if (Array.isArray(cmds)) {
+          setPaletteCommands(cmds);
+        }
+      })
+      .catch((err) => console.error('[CommandPalette] 加载失败:', err));
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -186,6 +205,93 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
     }
   };
 
+  // 根据当前输入实时过滤快捷指令
+  const filteredCommands = paletteCommands.filter((cmd) => {
+    const query = inputQuery.trim().toLowerCase();
+    if (!query || query === '/' || query === '#') return true;
+    const cleanQuery = query.startsWith('/') || query.startsWith('#') ? query.slice(1) : query;
+    return (
+      cmd.prefix.toLowerCase().includes(query) ||
+      cmd.name.toLowerCase().includes(cleanQuery) ||
+      cmd.code.toLowerCase().includes(cleanQuery) ||
+      (cmd.description && cmd.description.toLowerCase().includes(cleanQuery))
+    );
+  });
+
+  const handleInputChange = (val: string) => {
+    setInputQuery(val);
+    if (val.startsWith('/') || val.startsWith('#')) {
+      setShowPalette(true);
+      setPaletteSelectedIndex(0);
+    } else if (showPalette && !val.trim()) {
+      setShowPalette(false);
+    }
+  };
+
+  const togglePalette = () => {
+    if (!showPalette) {
+      if (!inputQuery.startsWith('/') && !inputQuery.startsWith('#')) {
+        setInputQuery('/');
+      }
+      setShowPalette(true);
+      setPaletteSelectedIndex(0);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    } else {
+      setShowPalette(false);
+    }
+  };
+
+  const handleSelectCommand = (cmd: CommandPaletteItem) => {
+    const template = cmd.template || cmd.prefix;
+    setInputQuery(template);
+    setShowPalette(false);
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (showPalette && filteredCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setPaletteSelectedIndex((prev) => (prev + 1) % filteredCommands.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPaletteSelectedIndex((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        if (filteredCommands[paletteSelectedIndex]) {
+          handleSelectCommand(filteredCommands[paletteSelectedIndex]);
+        }
+        return;
+      }
+      if (e.key === 'Enter') {
+        // 如果输入未含空格（未输完参数），Enter 则触发指令自动补全
+        if (!inputQuery.includes(' ') && filteredCommands[paletteSelectedIndex]) {
+          e.preventDefault();
+          handleSelectCommand(filteredCommands[paletteSelectedIndex]);
+          return;
+        }
+        setShowPalette(false);
+        handleSendMessage();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowPalette(false);
+        return;
+      }
+    }
+
+    if (e.key === 'Enter') {
+      handleSendMessage();
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -220,9 +326,9 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Bot size={20} color="#38bdf8" />
           <div>
-            <div style={{ fontSize: '15px', fontWeight: 600 }}>催收智能答疑与BPM工单助手</div>
+            <div style={{ fontSize: '15px', fontWeight: 600 }}>企业级智能客服与工单协同助手</div>
             <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-              当前绑定案件：<span style={{ color: '#38bdf8' }}>{caseId}</span>
+              当前关联服务单：<span style={{ color: '#38bdf8' }}>{caseId}</span>
             </div>
           </div>
         </div>
@@ -257,14 +363,94 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
             style={{
               textAlign: 'center',
               color: '#94a3b8',
-              marginTop: '60px',
+              marginTop: '40px',
               fontSize: '13px',
               lineHeight: '1.8',
             }}
           >
-            <ShieldAlert size={36} color="#cbd5e1" style={{ margin: '0 auto 10px' }} />
-            <div>催收合规知识与方案测算助手已就绪</div>
-            <div>您可以咨询抗辩话术、息费减免政策或直接提报停催工单</div>
+            <ShieldAlert size={36} color="#38bdf8" style={{ margin: '0 auto 10px' }} />
+            <div style={{ fontWeight: 600, color: '#334155', fontSize: '14px' }}>智能客服与工单协同助手已就绪</div>
+            <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>
+              点击下方快捷指令或输入问题直接体验：
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '340px', margin: '0 auto' }}>
+              <button
+                onClick={() => handleSendMessage('#ping')}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  color: '#2563eb',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                }}
+              >
+                <span>⚡</span> <strong>#ping</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1规则直通探活 &lt;5ms)</span>
+              </button>
+              <button
+                onClick={() => handleSendMessage('/help')}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  color: '#2563eb',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                }}
+              >
+                <span>📌</span> <strong>/help</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1指令帮助菜单直出)</span>
+              </button>
+              <button
+                onClick={() => handleSendMessage('/query user_id=10001')}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  color: '#2563eb',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                }}
+              >
+                <span>🛠️</span> <strong>/query user_id=10001</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1反射调度Tool查询账户)</span>
+              </button>
+              <button
+                onClick={() => handleSendMessage('客户反馈因不可抗力突发特殊情况，申请服务争议费用折让与补偿，符合什么政策？')}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  color: '#0f766e',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                }}
+              >
+                <span>💬</span> <strong>服务特批与费用争议政策咨询</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(复杂自然语言流式问答)</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -369,8 +555,18 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
           padding: '14px 16px',
           borderTop: '1px solid #e2e8f0',
           backgroundColor: '#ffffff',
+          position: 'relative',
         }}
       >
+        {/* 斜杠快捷指令浮层面板 */}
+        {showPalette && (
+          <CommandPalette
+            commands={filteredCommands}
+            selectedIndex={paletteSelectedIndex}
+            onSelect={handleSelectCommand}
+          />
+        )}
+
         <div
           style={{
             display: 'flex',
@@ -381,13 +577,35 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
             padding: '6px 10px',
           }}
         >
+          {/* 快捷指令触发按钮 */}
+          <button
+            type="button"
+            onClick={togglePalette}
+            title="快捷指令面板 (输入 / 或 # 唤起)"
+            style={{
+              background: showPalette ? '#dbeafe' : 'transparent',
+              border: 'none',
+              borderRadius: '6px',
+              padding: '4px 6px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: showPalette ? '#2563eb' : '#64748b',
+              transition: 'background-color 0.15s, color 0.15s',
+            }}
+          >
+            <Zap size={16} />
+          </button>
+
           <input
+            ref={inputRef}
             type="text"
-            placeholder={isStreaming ? 'AI 正在分析回复中...' : '输入催收疑问，或粘贴客户诉求...'}
+            placeholder={isStreaming ? 'AI 正在分析回复中...' : '输入 / 或 # 唤起指令，或输入诉求...'}
             disabled={isStreaming}
             value={inputQuery}
-            onChange={(e) => setInputQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onKeyDown={handleKeyDown}
             style={{
               flex: 1,
               border: 'none',

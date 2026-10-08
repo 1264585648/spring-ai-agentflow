@@ -24,7 +24,7 @@ if ("DEBT_RELIEF".equals(request.getCardType())) {
 
 ### 这种代码有什么致命缺陷？
 1. **违背开闭原则 (OCP, Open-Closed Principle)**：每当团队接入一个新业务，都必须修改底层的核心控制器（Controller）或核心服务。核心代码变得极其不稳定。
-2. **多团队并行开发灾难**：团队 A 在接入催收减免，团队 B 在接入行政审批，两个人在同一个类的 `if-else` 里改代码，Git 合并冲突（Merge Conflict）频发。
+2. **多团队并行开发灾难**：团队 A 在接入服务特批补偿，团队 B 在接入行政审批，两个人在同一个类的 `if-else` 里改代码，Git 合并冲突（Merge Conflict）频发。
 3. **无法做到框架与业务分离**：如果这个项目要开源，你根本不可能在开源核心包里预先写好所有公司的业务 `if-else` 分支！
 
 ---
@@ -44,7 +44,7 @@ flowchart TD
     end
 
     subgraph 业务插件层 ["业务扩展层 (按需插拔)"]
-        BizA["DebtReliefSubmitHandler<br/>(@Component 催收减免实现)"]
+        BizA["ServiceReliefSubmitHandler<br/>(@Component 服务特批补偿实现)"]
         BizB["LeaveRequestSubmitHandler<br/>(@Component 请假审批实现)"]
     end
 
@@ -110,13 +110,13 @@ public class CardInteractionController {
 ```
 
 ### 4. 业务方接入体验（丝滑至极）
-以后你把框架拉到公司仓库，要对接真实的催收 BPM，**不需要改框架里的任何一行代码**，只需要在业务包写一个类：
+以后你把框架拉到公司仓库，要对接真实的业务审批 BPM，**不需要改框架里的任何一行代码**，只需要在业务包写一个类：
 ```java
 @Component
 public class CompanyBpmSubmitHandler implements CardSubmitHandler {
     @Override
     public boolean supports(String cardType) {
-        return "DEBT_RELIEF".equals(cardType);
+        return "SERVICE_SPECIAL_COMPENSATION".equals(cardType);
     }
 
     @Override

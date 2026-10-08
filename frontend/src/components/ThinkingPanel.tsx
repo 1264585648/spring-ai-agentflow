@@ -35,7 +35,7 @@ export const ThinkingPanel: React.FC<ThinkingPanelProps> = ({ content, isStreami
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <Brain size={15} color="#3b82f6" />
           <span style={{ fontWeight: 500, color: '#334155' }}>
-            {isStreaming ? '正在分析催收法规与政策依据...' : '深度思考过程 (已折叠)'}
+            {isStreaming ? '正在检索业务规范与政策依据...' : '深度思考过程 (已折叠)'}
           </span>
         </div>
         {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}

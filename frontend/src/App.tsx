@@ -12,7 +12,7 @@ export const App: React.FC = () => {
       backgroundColor: '#f1f5f9',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
-      {/* 模拟现有催收系统顶部导航 */}
+      {/* 模拟现有企业运营业务系统顶部导航 */}
       <header style={{
         height: '56px',
         backgroundColor: '#0f172a',
@@ -23,16 +23,16 @@ export const App: React.FC = () => {
         padding: '0 24px'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 600, fontSize: '16px' }}>
-          <span>🏦 催收业务中台 / 坐席作业工作台</span>
+          <span>🏢 企业服务运营中台 / 客户支持工作台</span>
         </div>
         <div style={{ fontSize: '13px', color: '#94a3b8' }}>
-          当前登录催收员：坐席007（催收一组）
+          当前登录专员：客服专家007（服务运营一组）
         </div>
       </header>
 
-      {/* 模拟催收案件工作流主界面 */}
+      {/* 模拟服务工单与争议处理主界面 */}
       <main style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
-        {/* 案件基本卡片 */}
+        {/* 业务工单基本卡片 */}
         <div style={{
           backgroundColor: '#ffffff',
           borderRadius: '10px',
@@ -43,17 +43,17 @@ export const App: React.FC = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span style={{ fontSize: '18px', fontWeight: 700, color: '#1e293b' }}>
-                案件档案：{currentCaseId}
+                服务单档案：{currentCaseId}
               </span>
               <span style={{
                 fontSize: '12px',
-                backgroundColor: '#fee2e2',
-                color: '#b91c1c',
+                backgroundColor: '#fef3c7',
+                color: '#d97706',
                 padding: '3px 8px',
                 borderRadius: '4px',
                 fontWeight: 600
               }}>
-                逾期 M2 (62 天)
+                处理中 (费用争议调解)
               </span>
             </div>
 
@@ -74,19 +74,19 @@ export const App: React.FC = () => {
                 boxShadow: '0 2px 4px rgba(37,99,235,0.2)'
               }}
             >
-              <Bot size={16} /> 呼起催收答疑助手
+              <Bot size={16} /> 呼起智能业务助手
             </button>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', fontSize: '13px' }}>
-            <div><span style={{ color: '#64748b' }}>借款人：</span>张*（110101********1234）</div>
-            <div><span style={{ color: '#64748b' }}>逾期本金：</span>￥12,500.00</div>
-            <div><span style={{ color: '#64748b' }}>应计罚息：</span>￥500.00</div>
-            <div><span style={{ color: '#64748b' }}>划扣状态：</span>扣划限额失败</div>
+            <div><span style={{ color: '#64748b' }}>客户姓名：</span>张*（110101********1234）</div>
+            <div><span style={{ color: '#64748b' }}>关联订单额：</span>￥12,500.00</div>
+            <div><span style={{ color: '#64748b' }}>争议服务费：</span>￥500.00</div>
+            <div><span style={{ color: '#64748b' }}>扣款状态：</span>渠道扣划超限校验</div>
           </div>
         </div>
 
-        {/* 模拟催收跟进记录与操作区 */}
+        {/* 模拟服务跟进记录与操作区 */}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
           <div style={{
             backgroundColor: '#ffffff',
@@ -95,14 +95,14 @@ export const App: React.FC = () => {
             boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
           }}>
             <h3 style={{ fontSize: '15px', color: '#1e293b', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <FileText size={16} /> 案件催记与客户抗辩记录
+              <FileText size={16} /> 服务沟通与客户诉求登记
             </h3>
             <div style={{ fontSize: '13px', color: '#475569', lineHeight: '1.8' }}>
               <div style={{ padding: '8px 0', borderBottom: '1px solid #f1f5f9' }}>
-                <strong>2026-10-07 15:30 外呼记录：</strong>客户声称近期在市人民医院进行重大疾病手术，已将住院证明发送至客服邮箱，表示目前无劳动收入，强烈申请减免逾期利息与罚息。
+                <strong>2026-10-07 15:30 在线客服跟进：</strong>客户反馈近期遭遇不可抗力突发事件，已将医院材料凭证发送至官方支持邮箱，申请减免/折让争议服务费用与违约金。
               </div>
               <div style={{ padding: '8px 0' }}>
-                <strong>2026-10-05 10:12 系统代扣：</strong>发起到期本息代扣 1,300 元，银行网关返回 `ERR_DEDUCT_201`，单日银行卡快捷支付超限。
+                <strong>2026-10-05 10:12 系统代扣处理：</strong>发起定期服务费扣划 1,300 元，支付通道返回 `ERR_DEDUCT_201`，单日银行卡快捷支付超限。
               </div>
             </div>
           </div>
@@ -114,16 +114,16 @@ export const App: React.FC = () => {
             boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
           }}>
             <h3 style={{ fontSize: '15px', color: '#1e293b', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <ShieldCheck size={16} color="#16a34a" /> 坐席操作指引
+              <ShieldCheck size={16} color="#16a34a" /> 业务操作指引
             </h3>
             <p style={{ fontSize: '13px', color: '#64748b', lineHeight: '1.6' }}>
-              当客户提出特殊困难减免或要求停催时，严禁坐席私自承诺。请点击右侧<strong>“AI智能答疑”</strong>输入借款人情况，由系统自动给出合规减免试算并直接提报 BPM 审批。
+              当客户提出特殊困难争议减免或特批报备时，严禁专员私自承诺。请点击右侧<strong>“呼起智能业务助手”</strong>录入情况，由系统根据企业规范自动给出合规方案试算并一键提报 BPM 审批。
             </p>
           </div>
         </div>
       </main>
 
-      {/* 嵌入的催收答疑机器人抽屉组件 */}
+      {/* 嵌入的智能协同助手抽屉组件 */}
       <ChatDrawer
         isOpen={drawerOpen}
         onClose={() => setDrawerOpen(false)}

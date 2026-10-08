@@ -83,4 +83,19 @@ class L1RuleRegistryTest {
         });
         assertFalse(ruleRegistry.getActiveRules().isEmpty());
     }
+
+    @Test
+    @DisplayName("测试斜杠快捷指令清单读取: getCommandPalette()")
+    void testCommandPaletteList() {
+        var paletteList = ruleRegistry.getCommandPalette();
+        assertNotNull(paletteList, "快捷指令清单不应为空");
+        assertFalse(paletteList.isEmpty(), "应提取出已注册的快捷指令");
+        assertTrue(paletteList.stream().anyMatch(item -> item.getPrefix().equals("#ping")), "应包含 #ping 探活指令");
+        assertTrue(paletteList.stream().anyMatch(item -> item.getPrefix().equals("/help")), "应包含 /help 帮助指令");
+        assertTrue(paletteList.stream().anyMatch(item -> item.getPrefix().equals("/query")), "应包含 /query 查账指令");
+
+        paletteList.forEach(item -> {
+            System.out.println("【Palette Item】" + item.getPrefix() + " (" + item.getName() + ") -> template: " + item.getTemplate());
+        });
+    }
 }

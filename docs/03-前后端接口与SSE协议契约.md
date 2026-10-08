@@ -2,9 +2,9 @@
 
 ## 1. 文档概述
 
-本文档定义了智能答疑与人机协同系统在**接入层（Access Layer）**的前后端交互规范。系统采用 **HTTP REST + Server-Sent Events (SSE)** 双向/流式交互模式：
-- **下行通道 (Server ➔ Client)**：通过 SSE 单向长连接，实时推送大模型思考链 (`thinking`)、打字机文字块 (`message`)、工具调用进度 (`progress`)、方案确认卡片 (`bpm_confirm_card`) 以及后续推荐问题 (`recommend_questions`)。
-- **上行通道 (Client ➔ Server)**：通过标准 HTTP POST 发送催收员提问，并在催收员核验方案后提交工单数据。
+本文档定义了智能业务协同与人机协同系统在**接入层（Access Layer）**的前后端交互规范。系统采用 **HTTP REST + Server-Sent Events (SSE)** 双向/流式交互模式：
+- **下行通道 (Server ➔ Client)**：通过 SSE 单向长连接，实时推送大模型思考链 (`thinking`)、打字机文字块 (`message`)、工具调用进度 (`progress`)、方案确认卡片 (`bpm_confirm_card` / `interactive_card`) 以及后续推荐问题 (`recommend_questions`)。
+- **上行通道 (Client ➔ Server)**：通过标准 HTTP POST 发送业务提问，并在专员核验方案后提交工单数据。
 
 ---
 
@@ -13,7 +13,7 @@
 ```mermaid
 sequenceDiagram
     autonumber
-    participant UI as 前端催收工作台
+    participant UI as 前端业务工作台
     participant Controller as 接入层 (ChatController)
     participant Pipeline as 业务流水线 (PipelineService)
     participant BPM as BPM 控制器 / 接口
@@ -22,26 +22,26 @@ sequenceDiagram
     UI->>Controller: GET /api/v1/chat/connect?sessionId={sessionId}
     Controller-->>UI: 200 OK (Content-Type: text/event-stream)
 
-    Note over UI, Controller: 2. 催收员发起咨询
+    Note over UI, Controller: 2. 专员发起咨询
     UI->>Controller: POST /api/v1/chat/ask {sessionId, query, caseId}
     Controller-->>UI: 200 OK {code: 200, message: "已受理"}
     Controller->>Pipeline: 异步分发处理
 
     Note over Pipeline, UI: 3. SSE 流式过程下发
     Pipeline-->>UI: event: thinking (思考分析政策)
-    Pipeline-->>UI: event: progress (调用核心账务系统试算减免上限)
-    Pipeline-->>UI: event: message (流式文本回复: "经核实，该客户符合大病减免条件...")
+    Pipeline-->>UI: event: progress (调用业务系统试算折让/补偿上限)
+    Pipeline-->>UI: event: message (流式文本回复: "经核实，该客户诉求符合特殊服务补偿条件...")
     
     rect rgb(255, 248, 230)
     Note over Pipeline, UI: 4. Human-in-the-loop 交互确认 (核心)
     Pipeline-->>UI: event: bpm_confirm_card (下发工单预填卡片数据)
-    UI->>UI: 渲染方案卡片 (案件号锁定，减免金额允许催收员微调)
+    UI->>UI: 渲染方案卡片 (服务单号锁定，补偿金额允许专员微调)
     end
 
     Pipeline-->>UI: event: recommend_questions (推荐下一步追问)
     Pipeline-->>UI: event: done (本次对话流结束)
 
-    Note over UI, BPM: 5. 催收员核验后确认提单
+    Note over UI, BPM: 5. 专员核验后确认提单
     UI->>BPM: POST /api/v1/bpm/submit-ticket {actionId, sessionId, caseId, formValues}
     BPM-->>UI: 200 OK {code: 200, bpmInstanceId: "BPM-20261008-001"}
 ```
@@ -62,16 +62,16 @@ sequenceDiagram
 
 ---
 
-### 3.2 催收员发送提问
+### 3.2 专员发送提问
 * **接口路径**：`POST /api/v1/chat/ask`
 * **Content-Type**：`application/json`
 * **请求体 (Request Body)**：
 ```json
 {
   "sessionId": "sess_88921a9f-4310",
-  "query": "案件 10086 客户声称刚做完大手术无力还款，如何申请免除罚息？",
+  "query": "服务单 ORD_10086 客户遭遇突发特殊情况影响服务履约，如何申请特批服务补偿？",
   "userId": "AGENT_007",
-  "caseId": "CASE_10086"
+  "caseId": "ORD_10086"
 }
 ```
 * **响应体 (Response Body)**：
@@ -93,12 +93,12 @@ sequenceDiagram
 {
   "actionId": "act_9f8a32b14e9a",
   "sessionId": "sess_88921a9f-4310",
-  "caseId": "CASE_10086",
-  "bpmProcessKey": "DEBT_SPECIAL_RELIEF_FLOW",
+  "caseId": "ORD_10086",
+  "bpmProcessKey": "SERVICE_SPECIAL_COMPENSATION_FLOW",
   "formValues": {
     "relief_amount": 500.00,
-    "relief_type": "因病特殊纾困豁免",
-    "apply_reason": "借款人确诊重大疾病住院，已上传县级以上医院确诊诊断书，申请酌情豁免罚息。"
+    "relief_type": "突发特殊情况特批补偿",
+    "apply_reason": "客户反馈突发不可抗力事件，已上传官方证明材料，申请酌情给予服务补偿与费用折让。"
   }
 }
 ```
@@ -128,7 +128,7 @@ data: <JSON_STRING>\n\n
 | 事件类型 (`event`) | 产生时机 | 前端渲染表现 |
 | :--- | :--- | :--- |
 | `thinking` | Agent 推理中 | 灰色字体折叠面板，带有“思考中...”动态动画 |
-| `progress` | 调用 RAG / 核心账务 / BPM 查询时 | 步骤条/轻提示（如：“正在调取账务减免上限...”） |
+| `progress` | 调用 RAG / 业务系统 / BPM 查询时 | 步骤条/轻提示（如：“正在调取业务折让上限...”） |
 | `message` | 大模型文本输出 | 打字机逐字输出 Markdown 正文 |
 | `bpm_confirm_card` | 形成明确解决方案，需人工核验提单 | 渲染交互式表单卡片，提供输入框、金额微调与提交按钮 |
 | `recommend_questions`| 流结束前 | 输出 2~3 个相关联的快捷提问气泡 |
@@ -144,7 +144,7 @@ data: <JSON_STRING>\n\n
 {
   "event": "thinking",
   "data": {
-    "content": "正在检索催收法条法规及《重大疾病减免管理实施细则》，核对借款人免息凭证要求..."
+    "content": "正在检索业务规范及《企业客户服务特批补偿管理实施细则》，核对凭证要求..."
   }
 }
 ```
@@ -155,7 +155,7 @@ data: <JSON_STRING>\n\n
   "event": "progress",
   "data": {
     "stage": "POLICY_RETRIEVAL",
-    "description": "已命中毒重病豁免标准条目，正在核算可减免息费上限"
+    "description": "已命中特批补偿标准条目，正在核算可补偿金额上限"
   }
 }
 ```
@@ -165,7 +165,7 @@ data: <JSON_STRING>\n\n
 {
   "event": "message",
   "data": {
-    "content": "经核实，客户提供的诊断证明符合特殊救助政策。\n"
+    "content": "经核实，客户提供的凭证材料符合特殊服务补偿政策。\n"
   }
 }
 ```
@@ -176,29 +176,29 @@ data: <JSON_STRING>\n\n
   "event": "bpm_confirm_card",
   "data": {
     "actionId": "act_9f8a32b14e9a",
-    "bpmProcessKey": "DEBT_SPECIAL_RELIEF_FLOW",
-    "title": "催收特殊费用减免方案申请",
-    "description": "系统已根据借款人病历资料与逾期账龄完成初审测算，建议减免罚息 500.00 元。",
+    "bpmProcessKey": "SERVICE_SPECIAL_COMPENSATION_FLOW",
+    "title": "业务特批服务补偿方案申请",
+    "description": "系统已根据客户证明材料与订单状态完成初审测算，建议补偿 500.00 元。",
     "formFields": [
       {
         "fieldKey": "case_id",
-        "label": "案件编号",
+        "label": "服务单号",
         "type": "text",
-        "value": "CASE_10086",
+        "value": "ORD_10086",
         "editable": false,
         "required": true
       },
       {
         "fieldKey": "relief_type",
-        "label": "减免类型",
+        "label": "申请类型",
         "type": "text",
-        "value": "因病特殊纾困豁免",
+        "value": "突发特殊情况特批补偿",
         "editable": false,
         "required": true
       },
       {
         "fieldKey": "relief_amount",
-        "label": "拟减免金额 (元)",
+        "label": "拟补偿金额 (元)",
         "type": "number",
         "value": 500.00,
         "maxLimit": 650.00,
@@ -209,7 +209,7 @@ data: <JSON_STRING>\n\n
         "fieldKey": "apply_reason",
         "label": "提单说明",
         "type": "textarea",
-        "value": "借款人确诊重大疾病住院，已上传县级以上医院确诊诊断书，申请酌情豁免罚息。",
+        "value": "客户遭遇不可抗力突发事件，已上传相关凭证材料，申请酌情给予服务补偿与费用折让。",
         "editable": true,
         "required": true
       }
@@ -226,9 +226,9 @@ data: <JSON_STRING>\n\n
   "event": "recommend_questions",
   "data": {
     "questions": [
-      "大病减免需留存哪些凭证材料？",
-      "审批通过后多长时间系统更新还款账单？",
-      "如何申请该案件的30天临时停催报备？"
+      "特批补偿需留存哪些凭证材料？",
+      "审批通过后多长时间系统更新账单状态？",
+      "如何申请该单据的加急审批报备？"
     ]
   }
 }

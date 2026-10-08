@@ -1,11 +1,13 @@
 spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
   application:
     name: spring-ai-agent
 
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:fat-31.mysql.ppdaidb.com}:${MYSQL_PORT:7406}/${MYSQL_DB:ppdai_dd_agent}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: ${MYSQL_USER:user_dd_agent}
-    password: ${MYSQL_PASSWORD:gB9ODG0_2n3OjF0p}
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:enterprise_agent_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:root123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
@@ -26,7 +28,7 @@ spring:
 
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY}
+      api-key: ${OPENAI_API_KEY:}
 
 # ===================================================================
 # Apollo 分布式配置中心配置 (多 Pod 集群部署选配)
@@ -41,7 +43,6 @@ apollo:
   bootstrap:
     enabled: ${APOLLO_BOOTSTRAP_ENABLED:false}
     namespaces: application,agent.l1.rules
-  meta: ${APOLLO_META:http://apconfig.ppdaicorp.com}
+  meta: ${APOLLO_META:http://localhost:8080}
   rules:
     namespace: ${APOLLO_RULES_NAMESPACE:agent.l1.rules}
-

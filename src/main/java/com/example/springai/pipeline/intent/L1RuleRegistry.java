@@ -1,5 +1,6 @@
 package com.example.springai.pipeline.intent;
 
+import com.example.springai.pipeline.dto.CommandPaletteItem;
 import com.example.springai.pipeline.entity.RuleDefinitionEntity;
 import com.example.springai.pipeline.event.L1RuleReloadEvent;
 import com.example.springai.pipeline.repository.RuleDefinitionRepository;
@@ -80,7 +81,8 @@ public class L1RuleRegistry {
                         entity.getTargetType(),
                         entity.getTargetRef(),
                         entity.getParamTemplate(),
-                        entity.getPriority()
+                        entity.getPriority(),
+                        entity.getDescription()
                 );
                 newRules.add(item);
             }
@@ -167,5 +169,31 @@ public class L1RuleRegistry {
 
     public List<RuleItem> getActiveRules() {
         return activeRulesHolder.get();
+    }
+
+    /**
+     * 获取全量快捷指令面板列表 (供前端斜杠悬浮菜单调用，纯内存零延迟)
+     */
+    public List<CommandPaletteItem> getCommandPalette() {
+        List<RuleItem> rules = activeRulesHolder.get();
+        List<CommandPaletteItem> palette = new ArrayList<>();
+        for (RuleItem rule : rules) {
+            String prefix = rule.getCommandPrefix();
+            // 只要是以 / 或 # 开头的快捷指令，均进入指令面板
+            if (prefix.startsWith("/") || prefix.startsWith("#")) {
+                String icon = prefix.startsWith("#") ? "Zap" :
+                        ("TOOL".equalsIgnoreCase(rule.getTargetType()) ? "Wrench" : "HelpCircle");
+                palette.add(CommandPaletteItem.builder()
+                        .code(rule.getRuleCode())
+                        .prefix(prefix)
+                        .name(rule.getRuleName())
+                        .template(rule.getCommandTemplate())
+                        .description(rule.getDescription())
+                        .targetType(rule.getTargetType())
+                        .icon(icon)
+                        .build());
+            }
+        }
+        return Collections.unmodifiableList(palette);
     }
 }

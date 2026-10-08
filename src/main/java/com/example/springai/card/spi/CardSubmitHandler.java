@@ -5,14 +5,14 @@ import com.example.springai.card.dto.CardSubmitResult;
 
 /**
  * 核心 SPI 扩展点: 交互卡片提交处理器
- * 任何业务方 (如催收 BPM、HR 流程、IT 运维) 只需实现此接口即可无缝对接自己的后台系统
+ * 任何业务方 (如业务审批 BPM、HR 流程、IT 运维) 只需实现此接口即可无缝对接自己的后台系统
  */
 public interface CardSubmitHandler {
 
     /**
      * 判断当前处理器是否支持该卡片类型
      *
-     * @param cardType 卡片类型 (如: DEBT_RELIEF, LEAVE_REQUEST, IT_APPLY)
+     * @param cardType 卡片类型 (如: SPECIAL_APPROVAL, LEAVE_REQUEST, IT_APPLY)
      * @return 是否支持
      */
     boolean supports(String cardType);

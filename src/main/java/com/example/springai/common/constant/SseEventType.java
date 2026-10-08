@@ -17,7 +17,7 @@ public enum SseEventType {
     MESSAGE("message"),
 
     /**
-     * 进度通知 (如: 正在查询案件详情、正在调用利息减免试算等)
+     * 进度通知 (如: 正在查询服务详情、正在调用方案试算等)
      */
     PROGRESS("progress"),
 

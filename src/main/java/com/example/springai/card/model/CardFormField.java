@@ -18,7 +18,7 @@ public class CardFormField {
     private String fieldKey;
 
     /**
-     * 界面展示标签 (如: "拟减免金额", "请假天数")
+     * 界面展示标签 (如: "特批补偿金额", "申请额度")
      */
     private String label;
 

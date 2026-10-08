@@ -84,6 +84,14 @@ export class SseChatClient {
   }
 
   /**
+   * 拉取全量快捷指令面板列表
+   */
+  public async getCommandPalette() {
+    const res = await fetch('/api/v1/commands/palette');
+    return res.json();
+  }
+
+  /**
    * 断开连接
    */
   public close() {

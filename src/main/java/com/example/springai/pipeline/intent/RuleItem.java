@@ -34,6 +34,8 @@ public class RuleItem {
     private String paramTemplate;
     private int priority = 100;
 
+    private String description;
+
     /**
      * 预编译后的正则表达式 Pattern 实例 (避免运行时重复编译，耗时从几毫秒降低至微秒级)
      */
@@ -42,7 +44,7 @@ public class RuleItem {
     public RuleItem() {}
 
     public RuleItem(String ruleCode, String ruleName, MatchType matchType, String patternExpr,
-                    String targetType, String targetRef, String paramTemplate, int priority) {
+                    String targetType, String targetRef, String paramTemplate, int priority, String description) {
         this.ruleCode = ruleCode;
         this.ruleName = ruleName;
         this.matchType = matchType;
@@ -51,9 +53,15 @@ public class RuleItem {
         this.targetRef = targetRef;
         this.paramTemplate = paramTemplate;
         this.priority = priority;
+        this.description = description;
         if (matchType == MatchType.REGEX && patternExpr != null && !patternExpr.isEmpty()) {
             this.compiledRegex = Pattern.compile(patternExpr, Pattern.CASE_INSENSITIVE);
         }
+    }
+
+    public RuleItem(String ruleCode, String ruleName, MatchType matchType, String patternExpr,
+                    String targetType, String targetRef, String paramTemplate, int priority) {
+        this(ruleCode, ruleName, matchType, patternExpr, targetType, targetRef, paramTemplate, priority, null);
     }
 
     /**
@@ -143,7 +151,41 @@ public class RuleItem {
     public int getPriority() { return priority; }
     public void setPriority(int priority) { this.priority = priority; }
 
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+
     public Pattern getCompiledRegex() { return compiledRegex; }
+
+    /**
+     * 提取指令简写前缀 (例如 /help, #ping, /query)
+     */
+    public String getCommandPrefix() {
+        if (patternExpr == null) return "";
+        String cleaned = patternExpr.startsWith("^") ? patternExpr.substring(1) : patternExpr;
+        int spaceIdx = cleaned.indexOf("\\s+");
+        if (spaceIdx == -1) {
+            spaceIdx = cleaned.indexOf(" ");
+        }
+        if (spaceIdx != -1) {
+            return cleaned.substring(0, spaceIdx).trim();
+        }
+        return cleaned.replaceAll("[$^]", "").trim();
+    }
+
+    /**
+     * 提取补全模板 (例如 /help, #ping, /query user_id=)
+     */
+    public String getCommandTemplate() {
+        if (patternExpr == null) return "";
+        if (matchType == MatchType.EXACT || matchType == MatchType.PREFIX) {
+            return patternExpr.trim();
+        }
+        // REGEX 表达式提取模板: ^/query\s+user_id=(\d+)$ -> /query user_id=
+        String cleaned = patternExpr.replaceAll("^\\^", "").replaceAll("\\$$", "");
+        cleaned = cleaned.replaceAll("\\\\s\\+", " ");
+        cleaned = cleaned.replaceAll("\\([^)]*\\)", "");
+        return cleaned.trim();
+    }
 
     // 兼容原旧方法
     public String getPattern() { return patternExpr; }
