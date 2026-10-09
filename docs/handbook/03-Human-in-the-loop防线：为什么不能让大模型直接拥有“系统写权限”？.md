@@ -11,31 +11,31 @@
 
 ```mermaid
 flowchart LR
-    User["用户提问: 帮我申请特批补偿500元费用"] --> LLM["大模型推理 (存在幻觉风险)"]
-    LLM -->|直接调用写工具| API["核心系统: 扣款 / 补偿 / 服务变更 ❌"]
+    User["用户提问: 帮我把代码直接合并并创建Release发版工单"] --> LLM["大模型推理 (存在幻觉风险)"]
+    LLM -->|直接调用写工具| API["核心系统: 创建Issue / 合并PR / 发布生产 ❌"]
 ```
 
 ### 这种“全自动写接口”在企业生产中是绝对灾难：
-1. **幻觉（Hallucination）不可预测**：模型可能因为少看了某条政策，多核算了 1000 元补偿额；或者提取错一位订单号，导致对错误的目标客户执行了业务变更。
-2. **法律合规与审计责任无法界定**：在金融、政企与各类核心业务场景中，如果发生资损或审计违规，**“大模型让我这么干的”不能作为抗辩免责理由**。企业内部必须明确每一笔审批动作的**自然人主体责任**。
+1. **幻觉（Hallucination）不可预测**：模型可能因为少看了某条分支策略，错误把未经测试的变更合并到了 main 分支；或者提取错一位单号，在错误的仓库创建了工单。
+2. **审计与责任归属无法界定**：在代码托管、生产发布与核心资产管理中，如果发生资损或故障，**“大模型让我这么干的”不能作为免责理由**。企业与团队内部必须明确每一笔生产写操作的**自然人主体责任**。
 
 ---
 
 ## 二、 架构解法：卡片驱动的人机协同（Human-in-the-loop）
 
-业界的最高安全准则：**“大模型只做决策方案测算与表单预填，系统写权限牢牢握在人类员工手中。”**
+业界的最高安全准则：**“大模型只做决策方案测算与表单预填，系统写权限牢牢握在人类工程师手中。”**
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant LLM as Agent 大模型
     participant Card as 交互卡片 (前端渲染)
-    participant User as 业务员 (人类员工)
-    participant Back as 业务后台 / BPM
+    participant User as 开发者 (人类工程师)
+    participant Back as 业务后台 / GitHub API
 
     LLM->>Card: 下发预填方案卡片 (带 actionId)
     Note over Card: 关键字段系统锁定 (editable: false)<br/>微调参数允许人工修改 (editable: true)
-    User->>Card: 核对原始凭据，人工确认/微调数值
+    User->>Card: 核对预填参数，人工确认/微调数值
     User->>Back: 点击【确认提交】(携带 actionId)
     Back->>Back: 幂等性防重放校验
     Back->>Back: 真正调用写接口，回显工单号
@@ -51,7 +51,7 @@ sequenceDiagram
 - 员工刷新了浏览器重新加载了卡片；
 - 恶意的重放抓包请求。
 
-**如果没有 `actionId`**，下游的 BPM 系统或审批系统就会收到 3 份一模一样的工单申请！
+**如果没有 `actionId`**，下游的系统或 GitHub 仓库就会收到 3 份一模一样的工单创建请求！
 
 #### 解决方案：
 - 后端 Agent 生成卡片时，生成唯一的 `actionId = "act_" + UUID`；
@@ -68,18 +68,17 @@ if (idempotencyCache.putIfAbsent(request.getActionId(), Boolean.TRUE) != null) {
 
 ```json
 {
-  "fieldKey": "case_id",
-  "label": "业务单号",
-  "value": "ORD_10086",
-  "editable": false,     // 关键：系统只读锁
+  "fieldKey": "repo",
+  "label": "目标仓库 (Repository)",
+  "value": "spring-projects/spring-ai",
+  "editable": false,     // 关键：系统只读锁，锁定目标仓库防错提
   "required": true
 },
 {
-  "fieldKey": "apply_quota",
-  "label": "申请额度",
-  "value": 500,
-  "maxLimit": 800,       // 关键：动态上限校验
-  "editable": true,      // 允许员工微调
+  "fieldKey": "title",
+  "label": "Issue 标题",
+  "value": "[Bug]: Redis 连接池高并发下偶发泄漏问题",
+  "editable": true,      // 允许工程师微调标题与描述
   "required": true
 }
 ```

@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { ChatDrawer } from './components/ChatDrawer';
-import { Bot, FileText, PhoneCall, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Bot, GitPullRequest, GitBranch, AlertCircle, CheckCircle2, ShieldCheck, Terminal } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState<boolean>(true);
-  const [currentCaseId, setCurrentCaseId] = useState<string>('CASE_10086');
+  const [currentRepo, setCurrentRepo] = useState<string>('spring-projects/spring-ai');
 
   return (
     <div style={{
@@ -12,7 +12,7 @@ export const App: React.FC = () => {
       backgroundColor: '#f1f5f9',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
-      {/* 模拟现有企业运营业务系统顶部导航 */}
+      {/* 顶部导航 */}
       <header style={{
         height: '56px',
         backgroundColor: '#0f172a',
@@ -23,16 +23,16 @@ export const App: React.FC = () => {
         padding: '0 24px'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 600, fontSize: '16px' }}>
-          <span>🏢 企业服务运营中台 / 客户支持工作台</span>
+          <span>🐙 GitHub 研发协同与开源运维工作台 / DevOps 开发者中台</span>
         </div>
         <div style={{ fontSize: '13px', color: '#94a3b8' }}>
-          当前登录专员：客服专家007（服务运营一组）
+          当前登录协同专员：Core Maintainer (Spring AI 研发组)
         </div>
       </header>
 
-      {/* 模拟服务工单与争议处理主界面 */}
+      {/* 主界面内容 */}
       <main style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
-        {/* 业务工单基本卡片 */}
+        {/* 仓库状态基本卡片 */}
         <div style={{
           backgroundColor: '#ffffff',
           borderRadius: '10px',
@@ -42,18 +42,18 @@ export const App: React.FC = () => {
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '18px', fontWeight: 700, color: '#1e293b' }}>
-                服务单档案：{currentCaseId}
+              <span style={{ fontSize: '18px', fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <GitBranch size={20} color="#2563eb" /> 协同目标仓库：{currentRepo}
               </span>
               <span style={{
                 fontSize: '12px',
-                backgroundColor: '#fef3c7',
-                color: '#d97706',
+                backgroundColor: '#dcfce7',
+                color: '#16a34a',
                 padding: '3px 8px',
                 borderRadius: '4px',
                 fontWeight: 600
               }}>
-                处理中 (费用争议调解)
+                CI/CD 运行正常 (v2.0.0-SNAPSHOT)
               </span>
             </div>
 
@@ -74,19 +74,19 @@ export const App: React.FC = () => {
                 boxShadow: '0 2px 4px rgba(37,99,235,0.2)'
               }}
             >
-              <Bot size={16} /> 呼起智能业务助手
+              <Bot size={16} /> 呼起研发协同助手
             </button>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', fontSize: '13px' }}>
-            <div><span style={{ color: '#64748b' }}>客户姓名：</span>张*（110101********1234）</div>
-            <div><span style={{ color: '#64748b' }}>关联订单额：</span>￥12,500.00</div>
-            <div><span style={{ color: '#64748b' }}>争议服务费：</span>￥500.00</div>
-            <div><span style={{ color: '#64748b' }}>扣款状态：</span>渠道扣划超限校验</div>
+            <div><span style={{ color: '#64748b' }}>默认主分支：</span><code>main</code> (HEAD)</div>
+            <div><span style={{ color: '#64748b' }}>活跃待审 PR：</span>18 项 (含 #518 状态机)</div>
+            <div><span style={{ color: '#64748b' }}>待排查 Issue：</span>42 项 (含 #1024 压测泄漏)</div>
+            <div><span style={{ color: '#64748b' }}>微内核架构：</span>Java 21 + Spring AI 2.0</div>
           </div>
         </div>
 
-        {/* 模拟服务跟进记录与操作区 */}
+        {/* 研发待办与 AI 协同指南 */}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
           <div style={{
             backgroundColor: '#ffffff',
@@ -95,14 +95,29 @@ export const App: React.FC = () => {
             boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
           }}>
             <h3 style={{ fontSize: '15px', color: '#1e293b', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <FileText size={16} /> 服务沟通与客户诉求登记
+              <AlertCircle size={16} color="#ef4444" /> 近期构建告警与 Issue 缺陷待办
             </h3>
             <div style={{ fontSize: '13px', color: '#475569', lineHeight: '1.8' }}>
               <div style={{ padding: '8px 0', borderBottom: '1px solid #f1f5f9' }}>
-                <strong>2026-10-07 15:30 在线客服跟进：</strong>客户反馈近期遭遇不可抗力突发事件，已将医院材料凭证发送至官方支持邮箱，申请减免/折让争议服务费用与违约金。
+                <span style={{ backgroundColor: '#fee2e2', color: '#dc2626', padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, marginRight: '8px' }}>P1 待排查</span>
+                <strong>[Issue #1024]: Redis 连接池高并发压测偶发句柄泄漏</strong>
+                <div style={{ color: '#64748b', fontSize: '12px', marginTop: '2px' }}>
+                  压测 QPS 超过 1500 时连接池耗尽抛出 RedisConnectionException，已在右侧助手支持自动排障与提单。
+                </div>
+              </div>
+              <div style={{ padding: '8px 0', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ backgroundColor: '#fef3c7', color: '#d97706', padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, marginRight: '8px' }}>CI 告警</span>
+                <strong>[Actions #512]: GitHub Actions maven-test 单元测试超时</strong>
+                <div style={{ color: '#64748b', fontSize: '12px', marginTop: '2px' }}>
+                  单元测试 JedisConnectionPool 等待空闲对象超时，建议查阅 CI 运行记录。
+                </div>
               </div>
               <div style={{ padding: '8px 0' }}>
-                <strong>2026-10-05 10:12 系统代扣处理：</strong>发起定期服务费扣划 1,300 元，支付通道返回 `ERR_DEDUCT_201`，单日银行卡快捷支付超限。
+                <span style={{ backgroundColor: '#e0e7ff', color: '#4338ca', padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, marginRight: '8px' }}>PR 待审查</span>
+                <strong>[PR #518]: feat: 添加动态智能体元数据管理与生命周期状态机</strong>
+                <div style={{ color: '#64748b', fontSize: '12px', marginTop: '2px' }}>
+                  新增 sys_agent_definition 表持久化与核心保护锁，待 Maintainer 审查 Diff。
+                </div>
               </div>
             </div>
           </div>
@@ -114,10 +129,13 @@ export const App: React.FC = () => {
             boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
           }}>
             <h3 style={{ fontSize: '15px', color: '#1e293b', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <ShieldCheck size={16} color="#16a34a" /> 业务操作指引
+              <ShieldCheck size={16} color="#16a34a" /> 智能体协同与风控指引
             </h3>
+            <p style={{ fontSize: '13px', color: '#64748b', lineHeight: '1.6', marginBottom: '12px' }}>
+              <strong>Human-in-the-loop 防线：</strong>AI 在排查缺陷或审核 PR 后，<strong>严禁直接调用 GitHub 写权限接口</strong>。系统将自动装配规范卡片预填表单，由开发者核对后一键确认提交。
+            </p>
             <p style={{ fontSize: '13px', color: '#64748b', lineHeight: '1.6' }}>
-              当客户提出特殊困难争议减免或特批报备时，严禁专员私自承诺。请点击右侧<strong>“呼起智能业务助手”</strong>录入情况，由系统根据企业规范自动给出合规方案试算并一键提报 BPM 审批。
+              <strong>L1 极速指令：</strong>点击右侧<strong>“呼起研发协同助手”</strong>，输入 <code>#ping</code>、<code>/help</code> 或 <code>/repo {currentRepo}</code> 即可体验毫秒级直通响应。
             </p>
           </div>
         </div>
@@ -127,7 +145,7 @@ export const App: React.FC = () => {
       <ChatDrawer
         isOpen={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        caseId={currentCaseId}
+        caseId={currentRepo}
       />
     </div>
   );

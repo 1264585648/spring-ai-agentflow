@@ -7,7 +7,7 @@ spring:
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:enterprise_agent_db}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:root123456}
+    password: ${MYSQL_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
@@ -19,7 +19,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: none
-    show-sql: true
+    show-sql: false
     open-in-view: false
     properties:
       hibernate:
@@ -28,13 +28,18 @@ spring:
 
   ai:
     openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
       api-key: ${OPENAI_API_KEY:}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-4o-mini}
 
 # ===================================================================
 # Apollo 分布式配置中心配置 (多 Pod 集群部署选配)
 # 说明:
 # 1. 本地单机/CI 环境: enabled 保持 false，依赖 JVM 内部 Spring Event 与启动预热即可；
-# 2. 线上多节点集群环境: 开启 enabled: true，所有 Pod 自动接入 HTTP 长轮询广播，毫秒级同步最新规则。
+# 2. 线上多节点集群环境: 开启 enabled: true，所有 Pod 自动接入 HTTP 长轮询广播，毫秒级同步最新规则与模型配置。
+# 3. 密钥安全: API Key 与网关地址由 Apollo (agent.llm.config) 统一受控分发，业务库绝不建表落盘。
 # ===================================================================
 app:
   id: spring-ai-agent
@@ -42,7 +47,15 @@ app:
 apollo:
   bootstrap:
     enabled: ${APOLLO_BOOTSTRAP_ENABLED:false}
-    namespaces: application,agent.l1.rules
+    namespaces: application,agent.l1.rules,agent.llm.config
   meta: ${APOLLO_META:http://localhost:8080}
   rules:
     namespace: ${APOLLO_RULES_NAMESPACE:agent.l1.rules}
+  llm:
+    namespace: ${APOLLO_LLM_NAMESPACE:agent.llm.config}
+  openapi:
+    portal-url: ${APOLLO_PORTAL_URL:}
+    token: ${APOLLO_OPENAPI_TOKEN:}
+    env: ${APOLLO_ENV:DEV}
+    cluster: ${APOLLO_CLUSTER:default}
+    operator: ${APOLLO_OPENAPI_OPERATOR:apollo}

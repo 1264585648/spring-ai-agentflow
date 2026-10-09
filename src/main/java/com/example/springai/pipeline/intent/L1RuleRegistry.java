@@ -36,7 +36,11 @@ public class L1RuleRegistry {
     /**
      * 运行态规则快照容器 (无锁原子引用)
      */
-    private final AtomicReference<List<RuleItem>> activeRulesHolder = new AtomicReference<>(Collections.emptyList());
+    private final AtomicReference<RuleSnapshot> activeRulesHolder = new AtomicReference<>(RuleSnapshot.empty());
+
+    private volatile boolean lastReloadSuccessful;
+    private volatile List<String> lastSkippedRuleCodes = List.of();
+    private volatile String lastReloadError;
 
     public L1RuleRegistry(RuleDefinitionRepository ruleRepository,
                           @Qualifier("agentAsyncPostExecutor") Executor asyncExecutor) {
@@ -70,30 +74,49 @@ public class L1RuleRegistry {
         try {
             List<RuleDefinitionEntity> entities = ruleRepository.findByIsEnabledOrderByPriorityAsc(1);
             List<RuleItem> newRules = new ArrayList<>();
+            List<String> skipped = new ArrayList<>();
 
             for (RuleDefinitionEntity entity : entities) {
-                RuleItem.MatchType matchType = parseMatchType(entity.getMatchType());
-                RuleItem item = new RuleItem(
-                        entity.getRuleCode(),
-                        entity.getRuleName(),
-                        matchType,
-                        entity.getPatternExpr(),
-                        entity.getTargetType(),
-                        entity.getTargetRef(),
-                        entity.getParamTemplate(),
-                        entity.getPriority(),
-                        entity.getDescription()
-                );
-                newRules.add(item);
+                try {
+                    RuleItem.MatchType matchType = parseMatchType(entity.getMatchType());
+                    int priority = entity.getPriority() != null ? entity.getPriority() : 100;
+                    RuleItem item = new RuleItem(
+                            entity.getRuleCode(),
+                            entity.getRuleName(),
+                            matchType,
+                            entity.getPatternExpr(),
+                            entity.getTargetType(),
+                            entity.getTargetRef(),
+                            entity.getParamTemplate(),
+                            priority,
+                            entity.getDescription()
+                    );
+                    newRules.add(item);
+                } catch (Exception ruleError) {
+                    String ruleCode = entity.getRuleCode() != null ? entity.getRuleCode() : "UNKNOWN";
+                    skipped.add(ruleCode);
+                    log.error("[L1RuleRegistry] 跳过无法加载的规则 {}: {}", ruleCode, ruleError.getMessage());
+                }
             }
 
-            // 原子替换内存引用，零停机且旧请求无锁无阻塞继续执行
-            activeRulesHolder.set(Collections.unmodifiableList(newRules));
+            RuleSnapshot snapshot = new RuleSnapshot(
+                    Collections.unmodifiableList(newRules),
+                    Collections.unmodifiableList(skipped),
+                    skipped.isEmpty(),
+                    System.currentTimeMillis()
+            );
+            activeRulesHolder.set(snapshot);
+            lastSkippedRuleCodes = snapshot.getSkippedRuleCodes();
+            lastReloadSuccessful = snapshot.isComplete();
+            lastReloadError = null;
 
             long cost = System.currentTimeMillis() - startTime;
-            log.info("[L1RuleRegistry] ✅ 规则快照重载完成，当前生效规则数: {}, 耗时: {}ms", newRules.size(), cost);
+            log.info("[L1RuleRegistry] 规则快照重载完成，生效规则数: {}, 跳过: {}, 耗时: {}ms",
+                    newRules.size(), skipped, cost);
         } catch (Exception e) {
-            log.error("[L1RuleRegistry] ❌ 规则快照重载失败，保持上一次内存快照运行: {}", e.getMessage(), e);
+            lastReloadSuccessful = false;
+            lastReloadError = e.getMessage();
+            log.error("[L1RuleRegistry] 规则快照重载失败，保持上一次内存快照运行: {}", e.getMessage(), e);
         }
     }
 
@@ -109,7 +132,7 @@ public class L1RuleRegistry {
         }
 
         long startTime = System.currentTimeMillis();
-        List<RuleItem> currentRules = activeRulesHolder.get();
+        List<RuleItem> currentRules = activeRulesHolder.get().getRules();
 
         for (RuleItem rule : currentRules) {
             if (rule.matches(query)) {
@@ -168,14 +191,30 @@ public class L1RuleRegistry {
     }
 
     public List<RuleItem> getActiveRules() {
+        return activeRulesHolder.get().getRules();
+    }
+
+    public RuleSnapshot getSnapshot() {
         return activeRulesHolder.get();
+    }
+
+    public boolean isLastReloadSuccessful() {
+        return lastReloadSuccessful;
+    }
+
+    public List<String> getSkippedRuleCodes() {
+        return lastSkippedRuleCodes;
+    }
+
+    public String getLastReloadError() {
+        return lastReloadError;
     }
 
     /**
      * 获取全量快捷指令面板列表 (供前端斜杠悬浮菜单调用，纯内存零延迟)
      */
     public List<CommandPaletteItem> getCommandPalette() {
-        List<RuleItem> rules = activeRulesHolder.get();
+        List<RuleItem> rules = activeRulesHolder.get().getRules();
         List<CommandPaletteItem> palette = new ArrayList<>();
         for (RuleItem rule : rules) {
             String prefix = rule.getCommandPrefix();

@@ -30,6 +30,11 @@ public class RuleResponse {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    /**
+     * 集群版本号广播结果：OK、SKIPPED、FAILED。仅管理写接口填充。
+     */
+    private String clusterSync;
+
     public static RuleResponse fromEntity(RuleDefinitionEntity entity) {
         if (entity == null) return null;
         RuleResponse resp = new RuleResponse();

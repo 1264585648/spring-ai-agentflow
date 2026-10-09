@@ -22,28 +22,28 @@ sequenceDiagram
     UI->>Controller: GET /api/v1/chat/connect?sessionId={sessionId}
     Controller-->>UI: 200 OK (Content-Type: text/event-stream)
 
-    Note over UI, Controller: 2. 专员发起咨询
+    Note over UI, Controller: 2. 开发者发起咨询
     UI->>Controller: POST /api/v1/chat/ask {sessionId, query, caseId}
     Controller-->>UI: 200 OK {code: 200, message: "已受理"}
     Controller->>Pipeline: 异步分发处理
 
     Note over Pipeline, UI: 3. SSE 流式过程下发
-    Pipeline-->>UI: event: thinking (思考分析政策)
-    Pipeline-->>UI: event: progress (调用业务系统试算折让/补偿上限)
-    Pipeline-->>UI: event: message (流式文本回复: "经核实，该客户诉求符合特殊服务补偿条件...")
+    Pipeline-->>UI: event: thinking (分析研发意图并检索关联缺陷)
+    Pipeline-->>UI: event: progress (调用 GitHubApiTool 检索仓库上下文与查重)
+    Pipeline-->>UI: event: message (流式文本回复: "已检索 spring-projects/spring-ai 仓库...")
     
     rect rgb(255, 248, 230)
     Note over Pipeline, UI: 4. Human-in-the-loop 交互确认 (核心)
-    Pipeline-->>UI: event: bpm_confirm_card (下发工单预填卡片数据)
-    UI->>UI: 渲染方案卡片 (服务单号锁定，补偿金额允许专员微调)
+    Pipeline-->>UI: event: interactive_card (下发 GitHub Issue 预填卡片数据)
+    UI->>UI: 渲染方案卡片 (目标仓库锁定，标题与复现步骤允许开发者微调)
     end
 
     Pipeline-->>UI: event: recommend_questions (推荐下一步追问)
     Pipeline-->>UI: event: done (本次对话流结束)
 
-    Note over UI, BPM: 5. 专员核验后确认提单
-    UI->>BPM: POST /api/v1/bpm/submit-ticket {actionId, sessionId, caseId, formValues}
-    BPM-->>UI: 200 OK {code: 200, bpmInstanceId: "BPM-20261008-001"}
+    Note over UI, CardSPI: 5. 开发者核验后确认提单
+    UI->>CardSPI: POST /api/v1/card/submit {actionId, sessionId, cardType, formValues}
+    CardSPI-->>UI: 200 OK {code: 200, ticketId: "#1035", message: "Issue 已成功创建"}
 ```
 
 ---
@@ -62,16 +62,16 @@ sequenceDiagram
 
 ---
 
-### 3.2 专员发送提问
+### 3.2 开发者发送提问
 * **接口路径**：`POST /api/v1/chat/ask`
 * **Content-Type**：`application/json`
 * **请求体 (Request Body)**：
 ```json
 {
   "sessionId": "sess_88921a9f-4310",
-  "query": "服务单 ORD_10086 客户遭遇突发特殊情况影响服务履约，如何申请特批服务补偿？",
-  "userId": "AGENT_007",
-  "caseId": "ORD_10086"
+  "query": "我们在 spring-projects/spring-ai 仓库发现 Redis 连接池高并发泄漏，请协助建一个 Issue",
+  "userId": "DEV_OCTO_007",
+  "caseId": "spring-projects/spring-ai"
 }
 ```
 * **响应体 (Response Body)**：
@@ -85,20 +85,21 @@ sequenceDiagram
 
 ---
 
-### 3.3 确认并提交 BPM 审批工单
-* **接口路径**：`POST /api/v1/bpm/submit-ticket`
+### 3.3 确认并提交交互卡片 (SPI 统一提报接口)
+* **接口路径**：`POST /api/v1/card/submit`
 * **Content-Type**：`application/json`
 * **请求体 (Request Body)**：
 ```json
 {
   "actionId": "act_9f8a32b14e9a",
   "sessionId": "sess_88921a9f-4310",
-  "caseId": "ORD_10086",
-  "bpmProcessKey": "SERVICE_SPECIAL_COMPENSATION_FLOW",
+  "cardType": "GITHUB_ISSUE_SUBMIT",
   "formValues": {
-    "relief_amount": 500.00,
-    "relief_type": "突发特殊情况特批补偿",
-    "apply_reason": "客户反馈突发不可抗力事件，已上传官方证明材料，申请酌情给予服务补偿与费用折让。"
+    "repo": "spring-projects/spring-ai",
+    "issue_type": "Bug Report",
+    "title": "[Bug]: Redis 连接池高并发下偶发泄漏问题",
+    "labels": "bug, high-priority, redis",
+    "body": "在高并发压测场景下，Redis 连接池句柄未被正确归还，导致连接池耗尽。"
   }
 }
 ```
@@ -106,9 +107,9 @@ sequenceDiagram
 ```json
 {
   "code": 200,
-  "message": "BPM 工单提报成功",
-  "bpmInstanceId": "BPM-20261008-9821",
-  "processKey": "DEBT_SPECIAL_RELIEF_FLOW"
+  "message": "GitHub Issue #1035 已在仓库 spring-projects/spring-ai 成功创建，并已自动打上标签与指派研发维护团队！",
+  "ticketId": "#1035",
+  "cardType": "GITHUB_ISSUE_SUBMIT"
 }
 ```
 
@@ -128,9 +129,9 @@ data: <JSON_STRING>\n\n
 | 事件类型 (`event`) | 产生时机 | 前端渲染表现 |
 | :--- | :--- | :--- |
 | `thinking` | Agent 推理中 | 灰色字体折叠面板，带有“思考中...”动态动画 |
-| `progress` | 调用 RAG / 业务系统 / BPM 查询时 | 步骤条/轻提示（如：“正在调取业务折让上限...”） |
+| `progress` | 调用 RAG / GitHub 工具 / 仓库查重时 | 步骤条/轻提示（如：“已完成仓库上下文检索与 Issue 查重核验”） |
 | `message` | 大模型文本输出 | 打字机逐字输出 Markdown 正文 |
-| `bpm_confirm_card` | 形成明确解决方案，需人工核验提单 | 渲染交互式表单卡片，提供输入框、金额微调与提交按钮 |
+| `interactive_card` | 形成明确解决方案，需人工核验提单 | 渲染交互式表单卡片，关键参数锁定，微调参数允许编辑，支持一键提交 |
 | `recommend_questions`| 流结束前 | 输出 2~3 个相关联的快捷提问气泡 |
 | `done` | 当前回合结束 | 停止加载动画，激活提问输入框 |
 | `error` | 处理发生严重异常 | 红色轻提示或降级错误信息 |
@@ -144,7 +145,7 @@ data: <JSON_STRING>\n\n
 {
   "event": "thinking",
   "data": {
-    "content": "正在检索业务规范及《企业客户服务特批补偿管理实施细则》，核对凭证要求..."
+    "content": "未命中 L1 极速指令，MasterAgent 正在委派 GithubIssueAgent 研发协同专家并检索关联仓库与已知缺陷..."
   }
 }
 ```
@@ -154,8 +155,8 @@ data: <JSON_STRING>\n\n
 {
   "event": "progress",
   "data": {
-    "stage": "POLICY_RETRIEVAL",
-    "description": "已命中特批补偿标准条目，正在核算可补偿金额上限"
+    "stage": "GITHUB_SYNC",
+    "description": "已完成 spring-projects/spring-ai 仓库上下文检索与现有 Issue 缺陷查重核验"
   }
 }
 ```
@@ -165,57 +166,64 @@ data: <JSON_STRING>\n\n
 {
   "event": "message",
   "data": {
-    "content": "经核实，客户提供的凭证材料符合特殊服务补偿政策。\n"
+    "content": "您好！我是 GitHub Issue 治理与研发协同专家。已结合仓库上下文完成排查与查重，请核验下方工单内容：\n"
   }
 }
 ```
 
-#### (4) `bpm_confirm_card` BPM 方案确认卡片（关键协议）
+#### (4) `interactive_card` 方案确认卡片（关键协议）
 ```json
 {
-  "event": "bpm_confirm_card",
+  "event": "interactive_card",
   "data": {
     "actionId": "act_9f8a32b14e9a",
-    "bpmProcessKey": "SERVICE_SPECIAL_COMPENSATION_FLOW",
-    "title": "业务特批服务补偿方案申请",
-    "description": "系统已根据客户证明材料与订单状态完成初审测算，建议补偿 500.00 元。",
-    "formFields": [
+    "cardType": "GITHUB_ISSUE_SUBMIT",
+    "title": "GitHub Issue 提报与缺陷确认单",
+    "description": "基于多智能体分析与已知缺陷查重，已自动装配规范 Issue 模板。关键信息已锁定，支持微调复现步骤后一键提报：",
+    "fields": [
       {
-        "fieldKey": "case_id",
-        "label": "服务单号",
+        "fieldKey": "repo",
+        "label": "目标仓库 (Repository)",
         "type": "text",
-        "value": "ORD_10086",
+        "value": "spring-projects/spring-ai",
         "editable": false,
         "required": true
       },
       {
-        "fieldKey": "relief_type",
-        "label": "申请类型",
+        "fieldKey": "issue_type",
+        "label": "缺陷类型 (Issue Type)",
         "type": "text",
-        "value": "突发特殊情况特批补偿",
+        "value": "Bug Report (缺陷报告)",
         "editable": false,
         "required": true
       },
       {
-        "fieldKey": "relief_amount",
-        "label": "拟补偿金额 (元)",
-        "type": "number",
-        "value": 500.00,
-        "maxLimit": 650.00,
+        "fieldKey": "title",
+        "label": "Issue 标题",
+        "type": "text",
+        "value": "[Bug]: Redis 连接池高并发下偶发泄漏问题",
         "editable": true,
         "required": true
       },
       {
-        "fieldKey": "apply_reason",
-        "label": "提单说明",
+        "fieldKey": "labels",
+        "label": "关联标签 (Labels)",
+        "type": "text",
+        "value": "bug, high-priority, redis",
+        "editable": true,
+        "required": false
+      },
+      {
+        "fieldKey": "body",
+        "label": "复现步骤与排查说明",
         "type": "textarea",
-        "value": "客户遭遇不可抗力突发事件，已上传相关凭证材料，申请酌情给予服务补偿与费用折让。",
+        "value": "### 现象描述\n在高并发压测场景下，Redis 连接池句柄未被正确归还，导致连接池耗尽抛出异常。\n\n### 复现步骤\n1. 配置 Redis 连接池最大连接数为 20\n2. 启动并发请求压测 (QPS > 1500)\n3. 持续 10 分钟后触发 RedisConnectionException",
         "editable": true,
         "required": true
       }
     ],
-    "confirmButtonText": "确认并提交审批",
-    "cancelButtonText": "放弃提单"
+    "confirmButtonText": "确认并在 GitHub 创建 Issue",
+    "cancelButtonText": "放弃"
   }
 }
 ```
@@ -226,9 +234,9 @@ data: <JSON_STRING>\n\n
   "event": "recommend_questions",
   "data": {
     "questions": [
-      "特批补偿需留存哪些凭证材料？",
-      "审批通过后多长时间系统更新账单状态？",
-      "如何申请该单据的加急审批报备？"
+      "如何查看此 Issue 关联的 PR 修复分支？",
+      "查询 spring-projects/spring-ai 的最新 Release 版本",
+      "查看当前 GitHub Actions CI 流水线状态"
     ]
   }
 }

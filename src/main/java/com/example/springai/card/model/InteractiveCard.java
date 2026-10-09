@@ -22,7 +22,7 @@ public class InteractiveCard {
     private String actionId;
 
     /**
-     * 卡片业务类型标识 (如: IT_EQUIPMENT_APPLY, DEBT_RELIEF_FLOW, LEAVE_REQUEST)
+     * 卡片业务类型标识 (如: GITHUB_ISSUE_SUBMIT, IT_EQUIPMENT_APPLY, LEAVE_REQUEST)
      * 用于驱动后台 SPI 路由到不同的处理器
      */
     private String cardType;

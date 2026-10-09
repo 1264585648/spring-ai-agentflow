@@ -9,6 +9,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        timeout: 0,
+        proxyTimeout: 0,
         // 对 SSE 长连接至关重要，防止中间层代理对响应流进行缓冲截断
         ws: false,
       },

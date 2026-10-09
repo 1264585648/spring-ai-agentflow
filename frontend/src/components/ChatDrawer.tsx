@@ -146,6 +146,20 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
       case 'error':
         setIsStreaming(false);
         setCurrentProgress(null);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          const text = typeof data === 'string' ? data : (data?.message || '处理失败');
+          if (last && last.role === 'assistant') {
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...last,
+                content: (last.content || '') + text,
+              },
+            ];
+          }
+          return prev;
+        });
         break;
     }
   };
@@ -326,9 +340,9 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Bot size={20} color="#38bdf8" />
           <div>
-            <div style={{ fontSize: '15px', fontWeight: 600 }}>企业级智能客服与工单协同助手</div>
+            <div style={{ fontSize: '15px', fontWeight: 600 }}>GitHub 研发协同与多智能体助手</div>
             <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-              当前关联服务单：<span style={{ color: '#38bdf8' }}>{caseId}</span>
+              协同目标仓库：<span style={{ color: '#38bdf8' }}>{caseId}</span>
             </div>
           </div>
         </div>
@@ -369,7 +383,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
             }}
           >
             <ShieldAlert size={36} color="#38bdf8" style={{ margin: '0 auto 10px' }} />
-            <div style={{ fontWeight: 600, color: '#334155', fontSize: '14px' }}>智能客服与工单协同助手已就绪</div>
+            <div style={{ fontWeight: 600, color: '#334155', fontSize: '14px' }}>GitHub 研发协同多智能体助手已就绪</div>
             <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>
               点击下方快捷指令或输入问题直接体验：
             </div>
@@ -413,7 +427,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
                 <span>📌</span> <strong>/help</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1指令帮助菜单直出)</span>
               </button>
               <button
-                onClick={() => handleSendMessage('/query user_id=10001')}
+                onClick={() => handleSendMessage('/repo spring-projects/spring-ai')}
                 style={{
                   padding: '8px 12px',
                   backgroundColor: '#ffffff',
@@ -429,10 +443,10 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
                   boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
                 }}
               >
-                <span>🛠️</span> <strong>/query user_id=10001</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1反射调度Tool查询账户)</span>
+                <span>🔍</span> <strong>/repo spring-projects/spring-ai</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1正则提取参数查仓库)</span>
               </button>
               <button
-                onClick={() => handleSendMessage('客户反馈因不可抗力突发特殊情况，申请服务争议费用折让与补偿，符合什么政策？')}
+                onClick={() => handleSendMessage('在 spring-projects/spring-ai 仓库下，高并发压测时 Redis 连接池偶发泄漏抛出 RedisConnectionException，如何排查并提报 Issue？')}
                 style={{
                   padding: '8px 12px',
                   backgroundColor: '#ffffff',
@@ -448,7 +462,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
                   boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
                 }}
               >
-                <span>💬</span> <strong>服务特批与费用争议政策咨询</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(复杂自然语言流式问答)</span>
+                <span>🐛</span> <strong>Redis 泄漏排查与 Issue 提单协同</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(专家分析 + 预填卡片)</span>
               </button>
             </div>
           </div>

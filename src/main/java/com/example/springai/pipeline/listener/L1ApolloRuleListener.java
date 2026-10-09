@@ -58,7 +58,8 @@ public class L1ApolloRuleListener {
      * @param changedKeys 变更的配置键集合
      */
     public void handleConfigChange(String namespace, Set<String> changedKeys) {
-        log.info("[Apollo] ⚡ 监听到全集群配置变更通知, Namespace: {}, 变更键: {}", namespace, changedKeys);
+        log.info("[Apollo] 监听到全集群配置变更通知, Namespace: {}, 变更键: {}", namespace, changedKeys);
+        // 只从 MySQL 重载。这里不能再次发布版本号，否则会和写入端形成回环。
         ruleRegistry.reload();
     }
 
