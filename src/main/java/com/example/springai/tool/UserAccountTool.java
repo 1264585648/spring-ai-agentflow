@@ -1,7 +1,6 @@
 package com.example.springai.tool;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
@@ -11,9 +10,9 @@ import org.springframework.stereotype.Component;
  * 既可供 LLM 做 Function Calling 自主推理，也可被 L1 规则引擎零胶水代码直接反射调度。
  */
 @Component("userAccountTool")
+@Slf4j
 public class UserAccountTool {
 
-    private static final Logger log = LoggerFactory.getLogger(UserAccountTool.class);
 
     @Tool(description = "根据用户ID查询账户资产速查与待还余额")
     public String queryBalance(String userId) {

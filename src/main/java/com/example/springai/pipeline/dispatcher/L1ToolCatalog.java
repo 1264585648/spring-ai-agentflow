@@ -1,10 +1,9 @@
 package com.example.springai.pipeline.dispatcher;
 
+import lombok.extern.slf4j.Slf4j;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -28,9 +27,9 @@ import java.util.Map;
  * L1 直通只能调用这里的方法，不能按 Bean 名反射任意 public 方法。
  */
 @Component
+@Slf4j
 public class L1ToolCatalog {
 
-    private static final Logger log = LoggerFactory.getLogger(L1ToolCatalog.class);
 
     private final ApplicationContext applicationContext;
     private final ObjectMapper objectMapper = new ObjectMapper();

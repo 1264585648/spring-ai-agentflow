@@ -1,10 +1,11 @@
 package com.example.springai.api.controller;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
 import com.example.springai.api.dto.ChatRequest;
 import com.example.springai.execution.sse.SseEmitterManager;
 import com.example.springai.pipeline.AgentPipelineService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,17 +20,12 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/chat")
 @CrossOrigin(origins = "*")
+@Slf4j
+@RequiredArgsConstructor
 public class ChatController {
-
-    private static final Logger log = LoggerFactory.getLogger(ChatController.class);
 
     private final SseEmitterManager emitterManager;
     private final AgentPipelineService pipelineService;
-
-    public ChatController(SseEmitterManager emitterManager, AgentPipelineService pipelineService) {
-        this.emitterManager = emitterManager;
-        this.pipelineService = pipelineService;
-    }
 
     /**
      * 1. 建立 SSE 长连接通道
@@ -50,7 +46,7 @@ public class ChatController {
         log.info("[ChatController] 收到用户提问, sessionId: {}, query: {}", 
                 request.getSessionId(), request.getQuery());
 
-        if (request.getSessionId() == null || request.getQuery() == null || request.getQuery().trim().isEmpty()) {
+        if (!StringUtils.hasText(request.getSessionId()) || !StringUtils.hasText(request.getQuery())) {
             return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "sessionId 或 query 不能为空"));
         }
 

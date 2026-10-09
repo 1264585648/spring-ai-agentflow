@@ -1,11 +1,10 @@
 package com.example.springai.pipeline.agent;
 
+import lombok.extern.slf4j.Slf4j;
 import com.example.springai.pipeline.entity.AgentDefinitionEntity;
 import com.example.springai.pipeline.event.AgentDefinitionReloadEvent;
 import com.example.springai.pipeline.repository.AgentDefinitionRepository;
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -24,9 +23,9 @@ import java.util.stream.Collectors;
  * 4. 监听 AgentDefinitionReloadEvent 事件实现零停机热重载。
  */
 @Component
+@Slf4j
 public class AgentPromptRegistry {
 
-    private static final Logger log = LoggerFactory.getLogger(AgentPromptRegistry.class);
 
     private final AgentDefinitionRepository agentRepository;
 
@@ -114,13 +113,56 @@ public class AgentPromptRegistry {
 
     /**
      * 获取指定智能体的系统提示词 (若未配置或禁用则返回兜底提示词)
+     * 特殊逻辑：针对 MASTER_AGENT，自动组装主调度基底人设与当前在线的业务子专家清单
      */
     public String getSystemPrompt(String agentCode) {
+        if (AgentType.MASTER_AGENT.getCode().equalsIgnoreCase(agentCode)) {
+            return buildMasterAgentPrompt();
+        }
         return getAgent(agentCode)
                 .filter(a -> a.getIsEnabled() != null && a.getIsEnabled() == 1)
-                .filter(a -> !"OFFLINE".equalsIgnoreCase(a.getStatus()))
+                .filter(a -> !AgentStatus.OFFLINE.name().equalsIgnoreCase(a.getStatus()))
                 .map(AgentDefinition::getSystemPrompt)
                 .orElse("你是一个企业级智能协同助手，请保持客观、严谨、条理清晰的沟通风格。");
+    }
+
+    /**
+     * 动态组装 MasterAgent 的完整 System Prompt
+     * 将主调度基础人设与当前处于 ONLINE 状态的业务子专家矩阵动态拼接
+     */
+    public String buildMasterAgentPrompt() {
+        // 1. 获取 MasterAgent 的基底人设（支持从数据库配置覆写）
+        String basePrompt = getAgent(AgentType.MASTER_AGENT.getCode())
+                .filter(a -> a.getIsEnabled() != null && a.getIsEnabled() == 1)
+                .filter(a -> !AgentStatus.OFFLINE.name().equalsIgnoreCase(a.getStatus()))
+                .map(AgentDefinition::getSystemPrompt)
+                .orElse("你是一个企业级研发协同主调度专家 (MasterAgent)。");
+
+        // 2. 获取当前所有在线且启用的业务专家 (BUSINESS 层且 ONLINE)
+        List<AgentDefinition> onlineExperts = getOnlineBusinessAgents();
+
+        // 3. 动态渲染专家清单
+        StringBuilder sb = new StringBuilder();
+        sb.append(basePrompt.trim()).append("\n\n");
+        sb.append("【当前已挂载的可调度业务专家清单（动态热装载）】：\n");
+
+        if (onlineExperts.isEmpty()) {
+            sb.append("- （当前系统无在线业务专家，所有复合诉求将执行基础兜底）\n");
+        } else {
+            for (AgentDefinition expert : onlineExperts) {
+                sb.append(String.format("- [%s] (%s): %s\n",
+                        expert.getAgentCode(),
+                        expert.getAgentName(),
+                        expert.getDispatchDesc() != null ? expert.getDispatchDesc() : "无详细调度描述"));
+            }
+        }
+
+        sb.append("\n【调度决策守则】：\n")
+                .append("1. 识别用户输入中的真实意图，匹配最贴切的业务专家；\n")
+                .append("2. 多意图复合任务（如查 PR + 查 CI 报错），规划依赖顺序协同调用；\n")
+                .append("3. 严格禁止调用上述清单以外的未挂载专家。");
+
+        return sb.toString();
     }
 
     /**
@@ -135,10 +177,10 @@ public class AgentPromptRegistry {
      */
     public List<AgentDefinition> getOnlineBusinessAgents() {
         return registrySnapshot.get().values().stream()
-                .filter(a -> "BUSINESS".equalsIgnoreCase(a.getLayer()))
-                .filter(a -> "ONLINE".equalsIgnoreCase(a.getStatus()))
+                .filter(a -> AgentLayer.BUSINESS.name().equalsIgnoreCase(a.getLayer()))
+                .filter(a -> AgentStatus.ONLINE.name().equalsIgnoreCase(a.getStatus()))
                 .filter(a -> a.getIsEnabled() != null && a.getIsEnabled() == 1)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**
@@ -204,10 +246,10 @@ public class AgentPromptRegistry {
                 .agentCode(AgentType.QUERY_REWRITER.getCode())
                 .agentName(AgentType.QUERY_REWRITER.getName())
                 .agentType("PIPELINE_CORE")
-                .layer("ANALYSIS")
+                .layer(AgentLayer.ANALYSIS.name())
                 .temperature(AgentType.QUERY_REWRITER.getDefaultTemperature())
                 .isSystemCore(1)
-                .status("ONLINE")
+                .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
                 .dispatchDesc("负责多轮研发协同会话指代消除、补齐 owner/repo 仓库名与 Issue/PR 编号，输出规范查询")
                 .description(AgentType.QUERY_REWRITER.getDescription())
@@ -227,10 +269,10 @@ public class AgentPromptRegistry {
                 .agentCode(AgentType.MASTER_AGENT.getCode())
                 .agentName(AgentType.MASTER_AGENT.getName())
                 .agentType("PIPELINE_CORE")
-                .layer("ORCHESTRATION")
+                .layer(AgentLayer.ORCHESTRATION.name())
                 .temperature(AgentType.MASTER_AGENT.getDefaultTemperature())
                 .isSystemCore(1)
-                .status("ONLINE")
+                .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
                 .dispatchDesc("负责 GitHub 研发任务依赖拆解、子专家协同调度与多源分析结果聚合")
                 .description(AgentType.MASTER_AGENT.getDescription())
@@ -248,10 +290,10 @@ public class AgentPromptRegistry {
                 .agentCode(AgentType.GITHUB_ISSUE_AGENT.getCode())
                 .agentName(AgentType.GITHUB_ISSUE_AGENT.getName())
                 .agentType("BUSINESS_SUB")
-                .layer("BUSINESS")
+                .layer(AgentLayer.BUSINESS.name())
                 .temperature(AgentType.GITHUB_ISSUE_AGENT.getDefaultTemperature())
                 .isSystemCore(0)
-                .status("ONLINE")
+                .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
                 .attachedTools("[\"githubApiTool.queryIssues\"]")
                 .dispatchDesc("负责 GitHub Issue 检索关联、Bug 分类标签判定、重复问题排查与提单卡片装配")
@@ -270,10 +312,10 @@ public class AgentPromptRegistry {
                 .agentCode(AgentType.GITHUB_PR_AGENT.getCode())
                 .agentName(AgentType.GITHUB_PR_AGENT.getName())
                 .agentType("BUSINESS_SUB")
-                .layer("BUSINESS")
+                .layer(AgentLayer.BUSINESS.name())
                 .temperature(AgentType.GITHUB_PR_AGENT.getDefaultTemperature())
                 .isSystemCore(0)
-                .status("ONLINE")
+                .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
                 .attachedTools("[\"githubApiTool.queryPullRequest\"]")
                 .dispatchDesc("负责 GitHub Pull Request 代码差异比对、安全与规范审查、合并冲突与风险评估")
@@ -292,10 +334,10 @@ public class AgentPromptRegistry {
                 .agentCode(AgentType.GITHUB_RELEASE_AGENT.getCode())
                 .agentName(AgentType.GITHUB_RELEASE_AGENT.getName())
                 .agentType("BUSINESS_SUB")
-                .layer("BUSINESS")
+                .layer(AgentLayer.BUSINESS.name())
                 .temperature(AgentType.GITHUB_RELEASE_AGENT.getDefaultTemperature())
                 .isSystemCore(0)
-                .status("ONLINE")
+                .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
                 .attachedTools("[\"githubApiTool.queryLatestRelease\"]")
                 .dispatchDesc("负责版本发布、Git Tag 比对、自动提取 Changelog 与发版确认卡片装配")
@@ -314,10 +356,10 @@ public class AgentPromptRegistry {
                 .agentCode(AgentType.GITHUB_WORKFLOW_AGENT.getCode())
                 .agentName(AgentType.GITHUB_WORKFLOW_AGENT.getName())
                 .agentType("BUSINESS_SUB")
-                .layer("BUSINESS")
+                .layer(AgentLayer.BUSINESS.name())
                 .temperature(AgentType.GITHUB_WORKFLOW_AGENT.getDefaultTemperature())
                 .isSystemCore(0)
-                .status("ONLINE")
+                .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
                 .attachedTools("[\"githubApiTool.queryWorkflowRuns\"]")
                 .dispatchDesc("排查 GitHub Actions 工作流构建失败、解析测试报错日志并给出修复步骤")

@@ -1,7 +1,7 @@
 package com.example.springai.pipeline.agent;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
@@ -13,17 +13,12 @@ import org.springframework.stereotype.Component;
  * 3. 避免全局 System Prompt 污染，实现真正的 Multi-Agent 职责边界隔离。
  */
 @Component
+@Slf4j
+@RequiredArgsConstructor
 public class AgentChatClientFactory {
-
-    private static final Logger log = LoggerFactory.getLogger(AgentChatClientFactory.class);
 
     private final ChatClient.Builder baseChatClientBuilder;
     private final AgentPromptRegistry promptRegistry;
-
-    public AgentChatClientFactory(ChatClient.Builder baseChatClientBuilder, AgentPromptRegistry promptRegistry) {
-        this.baseChatClientBuilder = baseChatClientBuilder;
-        this.promptRegistry = promptRegistry;
-    }
 
     /**
      * 为指定智能体枚举类型创建专用 ChatClient 实例

@@ -1,5 +1,6 @@
 package com.example.springai.pipeline.impl;
 
+import lombok.extern.slf4j.Slf4j;
 import com.example.springai.api.dto.ChatRequest;
 import com.example.springai.card.model.CardFormField;
 import com.example.springai.card.model.InteractiveCard;
@@ -11,8 +12,6 @@ import com.example.springai.pipeline.dispatcher.L1ToolDispatcher;
 import com.example.springai.pipeline.intent.IntentMatchResult;
 import com.example.springai.pipeline.intent.L1RuleMatcher;
 import com.example.springai.tool.GitHubApiTool;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -34,9 +33,9 @@ import java.util.regex.Pattern;
  * 5. 全链路可观测：推送思考链、进度节点、打字机流式文本与智能推荐问题。
  */
 @Service
+@Slf4j
 public class AgentPipelineServiceImpl implements AgentPipelineService {
 
-    private static final Logger log = LoggerFactory.getLogger(AgentPipelineServiceImpl.class);
 
     private static final int STREAM_CHUNK_SIZE = 8;
     private static final long L1_CHUNK_DELAY_MS = 12L;

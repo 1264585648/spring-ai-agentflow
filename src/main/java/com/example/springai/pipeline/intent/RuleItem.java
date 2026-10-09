@@ -1,7 +1,6 @@
 package com.example.springai.pipeline.intent;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -9,9 +8,9 @@ import java.util.regex.Pattern;
 /**
  * 内存中编译后的单条 L1 匹配规则运行时对象
  */
+@Slf4j
 public class RuleItem {
 
-    private static final Logger log = LoggerFactory.getLogger(RuleItem.class);
 
     /**
      * 单次匹配允许访问的字符次数。超限视为未命中，避免回溯表达式占住调用线程。

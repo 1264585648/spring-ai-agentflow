@@ -1,11 +1,12 @@
 package com.example.springai.card.controller;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
 import com.example.springai.card.dto.CardSubmitRequest;
 import com.example.springai.card.dto.CardSubmitResult;
 import com.example.springai.card.spi.CardSubmitHandler;
 import com.example.springai.execution.sse.SseEventPublisher;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -23,9 +24,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @RestController
 @RequestMapping("/api/v1/card")
 @CrossOrigin(origins = "*")
+@Slf4j
+@RequiredArgsConstructor
 public class CardInteractionController {
-
-    private static final Logger log = LoggerFactory.getLogger(CardInteractionController.class);
 
     private final List<CardSubmitHandler> handlers;
     private final SseEventPublisher ssePublisher;
@@ -37,17 +38,12 @@ public class CardInteractionController {
      */
     private final Map<String, Long> idempotencyCache = new ConcurrentHashMap<>();
 
-    public CardInteractionController(List<CardSubmitHandler> handlers, SseEventPublisher ssePublisher) {
-        this.handlers = handlers;
-        this.ssePublisher = ssePublisher;
-    }
-
     @PostMapping("/submit")
     public ResponseEntity<Map<String, Object>> submitCard(@RequestBody CardSubmitRequest request) {
         log.info("[CardController] 收到卡片确认提交请求, actionId: {}, cardType: {}",
                 request.getActionId(), request.getCardType());
 
-        if (request.getActionId() == null || request.getActionId().trim().isEmpty()) {
+        if (!StringUtils.hasText(request.getActionId())) {
             return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "actionId 不能为空"));
         }
 

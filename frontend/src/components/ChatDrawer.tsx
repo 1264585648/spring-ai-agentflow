@@ -5,7 +5,9 @@ import { ThinkingPanel } from './ThinkingPanel';
 import { InteractiveCard } from './InteractiveCard';
 import { QuestionChips } from './QuestionChips';
 import { CommandPalette } from './CommandPalette';
-import { MessageSquareText, Send, X, RefreshCw, Bot, User, ShieldAlert, Zap } from 'lucide-react';
+import { ChatHeader } from './ChatHeader';
+import { WelcomeGuide } from './WelcomeGuide';
+import { MessageSquareText, Send, X, RefreshCw, Bot, User, Zap } from 'lucide-react';
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -326,39 +328,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
       }}
     >
       {/* 顶部标题栏 */}
-      <div
-        style={{
-          padding: '14px 18px',
-          borderBottom: '1px solid #e2e8f0',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: '#0f172a',
-          color: '#ffffff',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Bot size={20} color="#38bdf8" />
-          <div>
-            <div style={{ fontSize: '15px', fontWeight: 600 }}>GitHub 研发协同与多智能体助手</div>
-            <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-              协同目标仓库：<span style={{ color: '#38bdf8' }}>{caseId}</span>
-            </div>
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#94a3b8',
-            cursor: 'pointer',
-            padding: '4px',
-          }}
-        >
-          <X size={18} />
-        </button>
-      </div>
+      <ChatHeader caseId={caseId} onClose={onClose} />
 
       {/* 消息历史滚动区 */}
       <div
@@ -373,99 +343,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
         }}
       >
         {messages.length === 0 && (
-          <div
-            style={{
-              textAlign: 'center',
-              color: '#94a3b8',
-              marginTop: '40px',
-              fontSize: '13px',
-              lineHeight: '1.8',
-            }}
-          >
-            <ShieldAlert size={36} color="#38bdf8" style={{ margin: '0 auto 10px' }} />
-            <div style={{ fontWeight: 600, color: '#334155', fontSize: '14px' }}>GitHub 研发协同多智能体助手已就绪</div>
-            <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>
-              点击下方快捷指令或输入问题直接体验：
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '340px', margin: '0 auto' }}>
-              <button
-                onClick={() => handleSendMessage('#ping')}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  color: '#2563eb',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-                }}
-              >
-                <span>⚡</span> <strong>#ping</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1规则直通探活 &lt;5ms)</span>
-              </button>
-              <button
-                onClick={() => handleSendMessage('/help')}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  color: '#2563eb',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-                }}
-              >
-                <span>📌</span> <strong>/help</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1指令帮助菜单直出)</span>
-              </button>
-              <button
-                onClick={() => handleSendMessage('/repo spring-projects/spring-ai')}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  color: '#2563eb',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-                }}
-              >
-                <span>🔍</span> <strong>/repo spring-projects/spring-ai</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(L1正则提取参数查仓库)</span>
-              </button>
-              <button
-                onClick={() => handleSendMessage('在 spring-projects/spring-ai 仓库下，高并发压测时 Redis 连接池偶发泄漏抛出 RedisConnectionException，如何排查并提报 Issue？')}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  color: '#0f766e',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-                }}
-              >
-                <span>🐛</span> <strong>Redis 泄漏排查与 Issue 提单协同</strong> <span style={{ color: '#64748b', fontSize: '11px' }}>(专家分析 + 预填卡片)</span>
-              </button>
-            </div>
-          </div>
+          <WelcomeGuide onSelectPrompt={handleSendMessage} />
         )}
 
         {messages.map((msg) => (

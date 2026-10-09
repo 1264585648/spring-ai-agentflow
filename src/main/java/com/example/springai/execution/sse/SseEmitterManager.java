@@ -1,10 +1,9 @@
 package com.example.springai.execution.sse;
 
+import lombok.extern.slf4j.Slf4j;
 import com.example.springai.common.result.SsePacket;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -21,9 +20,9 @@ import java.util.concurrent.TimeUnit;
  * 连接按会话保持，done/error 只结束当前回合，不关闭长连接。
  */
 @Component
+@Slf4j
 public class SseEmitterManager {
 
-    private static final Logger log = LoggerFactory.getLogger(SseEmitterManager.class);
 
     /**
      * 0 表示容器不为这条异步请求设置超时，空闲保活交给心跳。

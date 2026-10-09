@@ -1,9 +1,8 @@
 package com.example.springai.card.spi;
 
+import lombok.extern.slf4j.Slf4j;
 import com.example.springai.card.dto.CardSubmitRequest;
 import com.example.springai.card.dto.CardSubmitResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -19,9 +18,9 @@ import java.util.Map;
  */
 @Component
 @Order(10)
+@Slf4j
 public class GitHubIssueCardSubmitHandler implements CardSubmitHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(GitHubIssueCardSubmitHandler.class);
 
     public static final String CARD_TYPE_SUBMIT = "GITHUB_ISSUE_SUBMIT";
     public static final String CARD_TYPE_CREATE = "GITHUB_ISSUE_CREATE";

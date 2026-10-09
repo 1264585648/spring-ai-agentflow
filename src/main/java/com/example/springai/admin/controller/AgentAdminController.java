@@ -3,6 +3,9 @@ package com.example.springai.admin.controller;
 import com.example.springai.admin.dto.AgentCreateRequest;
 import com.example.springai.admin.dto.AgentResponse;
 import com.example.springai.admin.dto.AgentUpdateRequest;
+import com.example.springai.common.result.ApiResponse;
+import com.example.springai.pipeline.agent.AgentLayer;
+import com.example.springai.pipeline.agent.AgentStatus;
 import com.example.springai.pipeline.entity.AgentDefinitionEntity;
 import com.example.springai.pipeline.entity.RuleDefinitionEntity;
 import com.example.springai.pipeline.event.AgentDefinitionReloadEvent;
@@ -10,11 +13,11 @@ import com.example.springai.pipeline.repository.AgentDefinitionRepository;
 import com.example.springai.pipeline.repository.RuleDefinitionRepository;
 import com.example.springai.pipeline.sync.ClusterSyncResult;
 import com.example.springai.pipeline.sync.L1ClusterSync;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -22,46 +25,34 @@ import java.util.stream.Collectors;
 
 /**
  * 智能体元数据与生命周期管理后台 REST API (AgentAdminController)
- * 严格遵循工程规范 RULE-01 与 RULE-06:
+ * 严格遵循工程规范 RULE-01, RULE-06, RULE-07:
  * 1. 骨架核心智能体 (is_system_core=1) 锁定保护，严禁下线或修改结构；
  * 2. 业务专家智能体支持动态新增、提示词热更新与参数微调；
  * 3. 严禁物理删除 (DELETE)，推行生命周期状态机与前置规则依赖审计；
- * 4. 修改后发布 Spring 事件驱动内存零停机热重载，并可选广播版本号至集群。
+ * 4. 修改后发布 Spring 事件驱动内存零停机热重载，并可选广播版本号至集群；
+ * 5. 使用 @Slf4j 与 @RequiredArgsConstructor，强类型校验与 Java 21 toList()。
  */
 @CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/v1/admin/agents")
+@Slf4j
+@RequiredArgsConstructor
 public class AgentAdminController {
-
-    private static final Logger log = LoggerFactory.getLogger(AgentAdminController.class);
-
-    private static final Set<String> VALID_STATUSES = Set.of("DRAFT", "ONLINE", "DEPRECATED", "OFFLINE");
-    private static final Set<String> VALID_LAYERS = Set.of("ANALYSIS", "ORCHESTRATION", "BUSINESS", "DATA_FLYWHEEL");
 
     private final AgentDefinitionRepository agentRepository;
     private final RuleDefinitionRepository ruleRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final L1ClusterSync clusterSync;
 
-    public AgentAdminController(AgentDefinitionRepository agentRepository,
-                                RuleDefinitionRepository ruleRepository,
-                                ApplicationEventPublisher eventPublisher,
-                                @Autowired(required = false) L1ClusterSync clusterSync) {
-        this.agentRepository = agentRepository;
-        this.ruleRepository = ruleRepository;
-        this.eventPublisher = eventPublisher;
-        this.clusterSync = clusterSync;
-    }
-
     /**
-     * 查询所有智能体列表 (系统核心优先，ID正序)
+     * 查询所有智能体列表 (系统核心优先，ID正序) - Java 21 toList()
      */
     @GetMapping
     public ResponseEntity<List<AgentResponse>> listAgents() {
         List<AgentDefinitionEntity> entities = agentRepository.findAllByOrderByIsSystemCoreDescIdAsc();
         List<AgentResponse> responses = entities.stream()
                 .map(AgentResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
         return ResponseEntity.ok(responses);
     }
 
@@ -82,7 +73,7 @@ public class AgentAdminController {
      */
     @PostMapping
     public ResponseEntity<?> createAgent(@RequestBody AgentCreateRequest req) {
-        if (req.getAgentCode() == null || req.getAgentCode().trim().isEmpty()) {
+        if (!StringUtils.hasText(req.getAgentCode())) {
             return badRequest("agentCode 不能为空");
         }
         String cleanCode = req.getAgentCode().trim().toUpperCase(Locale.ROOT);
@@ -92,19 +83,19 @@ public class AgentAdminController {
         if (agentRepository.existsByAgentCode(cleanCode)) {
             return badRequest("agentCode 已存在: " + cleanCode);
         }
-        if (req.getAgentName() == null || req.getAgentName().trim().isEmpty()) {
+        if (!StringUtils.hasText(req.getAgentName())) {
             return badRequest("agentName 不能为空");
         }
-        if (req.getSystemPrompt() == null || req.getSystemPrompt().trim().isEmpty()) {
+        if (!StringUtils.hasText(req.getSystemPrompt())) {
             return badRequest("systemPrompt 提示词不能为空");
         }
-        if (req.getDispatchDesc() == null || req.getDispatchDesc().trim().isEmpty()) {
+        if (!StringUtils.hasText(req.getDispatchDesc())) {
             return badRequest("dispatchDesc 调度意图描述不能为空（供 MasterAgent 路由判定使用）");
         }
 
-        String layer = req.getLayer() != null ? req.getLayer().trim().toUpperCase(Locale.ROOT) : "BUSINESS";
-        if (!VALID_LAYERS.contains(layer)) {
-            return badRequest("不支持的 layer 分层: " + layer + "，合法值为: " + VALID_LAYERS);
+        String layer = StringUtils.hasText(req.getLayer()) ? req.getLayer().trim().toUpperCase(Locale.ROOT) : AgentLayer.BUSINESS.name();
+        if (!AgentLayer.isValid(layer)) {
+            return badRequest("不支持的 layer 分层: " + layer + "，合法值为: " + Arrays.toString(AgentLayer.values()));
         }
 
         Double temp = req.getTemperature() != null ? req.getTemperature() : 0.30;
@@ -119,11 +110,11 @@ public class AgentAdminController {
                 .layer(layer)
                 .systemPrompt(req.getSystemPrompt().trim())
                 .dispatchDesc(req.getDispatchDesc().trim())
-                .modelName(req.getModelName() != null && !req.getModelName().trim().isEmpty() ? req.getModelName().trim() : null)
+                .modelName(StringUtils.hasText(req.getModelName()) ? req.getModelName().trim() : null)
                 .temperature(temp)
                 .attachedTools(req.getAttachedTools())
                 .isSystemCore(0)
-                .status("ONLINE")
+                .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
                 .version(1)
                 .description(req.getDescription())
@@ -151,17 +142,17 @@ public class AgentAdminController {
         }
 
         AgentDefinitionEntity entity = opt.get();
-        if (req.getAgentName() != null && !req.getAgentName().trim().isEmpty()) {
+        if (StringUtils.hasText(req.getAgentName())) {
             entity.setAgentName(req.getAgentName().trim());
         }
-        if (req.getSystemPrompt() != null && !req.getSystemPrompt().trim().isEmpty()) {
+        if (StringUtils.hasText(req.getSystemPrompt())) {
             entity.setSystemPrompt(req.getSystemPrompt().trim());
         }
-        if (req.getDispatchDesc() != null && !req.getDispatchDesc().trim().isEmpty()) {
+        if (StringUtils.hasText(req.getDispatchDesc())) {
             entity.setDispatchDesc(req.getDispatchDesc().trim());
         }
         if (req.getModelName() != null) {
-            entity.setModelName(req.getModelName().trim().isEmpty() ? null : req.getModelName().trim());
+            entity.setModelName(StringUtils.hasText(req.getModelName()) ? req.getModelName().trim() : null);
         }
         if (req.getTemperature() != null) {
             if (req.getTemperature() < 0.0 || req.getTemperature() > 1.0) {
@@ -193,12 +184,12 @@ public class AgentAdminController {
     @PostMapping("/{agentCode}/status")
     public ResponseEntity<?> updateStatus(@PathVariable String agentCode, @RequestBody Map<String, String> body) {
         String targetStatus = body != null ? body.get("status") : null;
-        if (targetStatus == null || targetStatus.trim().isEmpty()) {
+        if (!StringUtils.hasText(targetStatus)) {
             return badRequest("status 不能为空");
         }
         String cleanStatus = targetStatus.trim().toUpperCase(Locale.ROOT);
-        if (!VALID_STATUSES.contains(cleanStatus)) {
-            return badRequest("不支持的 status: " + cleanStatus + "，合法值为: " + VALID_STATUSES);
+        if (!AgentStatus.isValid(cleanStatus)) {
+            return badRequest("不支持的 status: " + cleanStatus + "，合法值为: " + Arrays.toString(AgentStatus.values()));
         }
 
         Optional<AgentDefinitionEntity> opt = agentRepository.findByAgentCode(agentCode.trim());
@@ -210,13 +201,13 @@ public class AgentAdminController {
 
         // 1. 系统核心锁定保护防线
         if (entity.getIsSystemCore() != null && entity.getIsSystemCore() == 1) {
-            if (!"ONLINE".equalsIgnoreCase(cleanStatus)) {
+            if (!AgentStatus.ONLINE.name().equalsIgnoreCase(cleanStatus)) {
                 return badRequest("违反 RULE-06 规范：系统核心骨架智能体 (is_system_core=1) 受到锁定保护，禁止下线或停用！");
             }
         }
 
         // 2. 下线/停用前置依赖审计防线 (当转为 DEPRECATED 或 OFFLINE 时)
-        if ("DEPRECATED".equalsIgnoreCase(cleanStatus) || "OFFLINE".equalsIgnoreCase(cleanStatus)) {
+        if (AgentStatus.DEPRECATED.name().equalsIgnoreCase(cleanStatus) || AgentStatus.OFFLINE.name().equalsIgnoreCase(cleanStatus)) {
             List<RuleDefinitionEntity> dependentRules = checkRuleDependencies(entity.getAgentCode());
             if (!dependentRules.isEmpty()) {
                 String ruleCodes = dependentRules.stream().map(RuleDefinitionEntity::getRuleCode).collect(Collectors.joining(", "));
@@ -226,7 +217,7 @@ public class AgentAdminController {
 
         entity.setStatus(cleanStatus);
         // 若为 OFFLINE 则同步禁用，其余状态保持启用
-        entity.setIsEnabled("OFFLINE".equalsIgnoreCase(cleanStatus) ? 0 : 1);
+        entity.setIsEnabled(AgentStatus.OFFLINE.name().equalsIgnoreCase(cleanStatus) ? 0 : 1);
         entity.setVersion(entity.getVersion() != null ? entity.getVersion() + 1 : 1);
 
         AgentDefinitionEntity saved = agentRepository.save(entity);
@@ -250,7 +241,7 @@ public class AgentAdminController {
     }
 
     /**
-     * 检查是否有 L1 规则正在依赖该 Agent
+     * 检查是否有 L1 规则正在依赖该 Agent - Java 21 toList()
      */
     private List<RuleDefinitionEntity> checkRuleDependencies(String agentCode) {
         if (ruleRepository == null) return Collections.emptyList();
@@ -258,7 +249,7 @@ public class AgentAdminController {
         return allRules.stream()
                 .filter(r -> r.getIsEnabled() != null && r.getIsEnabled() == 1)
                 .filter(r -> r.getTargetRef() != null && r.getTargetRef().contains(agentCode))
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**
@@ -277,18 +268,10 @@ public class AgentAdminController {
     }
 
     private ResponseEntity<?> badRequest(String message) {
-        Map<String, Object> err = new LinkedHashMap<>();
-        err.put("code", 400);
-        err.put("error", "Bad Request");
-        err.put("message", message);
-        return ResponseEntity.badRequest().body(err);
+        return ResponseEntity.badRequest().body(ApiResponse.fail(400, message));
     }
 
     private ResponseEntity<?> notFound(String message) {
-        Map<String, Object> err = new LinkedHashMap<>();
-        err.put("code", 404);
-        err.put("error", "Not Found");
-        err.put("message", message);
-        return ResponseEntity.status(404).body(err);
+        return ResponseEntity.status(404).body(ApiResponse.fail(404, message));
     }
 }

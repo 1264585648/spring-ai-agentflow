@@ -1,9 +1,9 @@
 package com.example.springai.pipeline.dispatcher;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.core.StandardReflectionParameterNameDiscoverer;
@@ -17,17 +17,13 @@ import java.lang.reflect.Parameter;
  * 只执行 {@link L1ToolCatalog} 中登记的 @Tool 方法，并按 JSON 绑定方法参数。
  */
 @Component
+@Slf4j
+@RequiredArgsConstructor
 public class L1ToolDispatcher {
-
-    private static final Logger log = LoggerFactory.getLogger(L1ToolDispatcher.class);
 
     private final L1ToolCatalog toolCatalog;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ParameterNameDiscoverer parameterNameDiscoverer = new StandardReflectionParameterNameDiscoverer();
-
-    public L1ToolDispatcher(L1ToolCatalog toolCatalog) {
-        this.toolCatalog = toolCatalog;
-    }
 
     /**
      * 调度执行指定的 Tool。

@@ -1,12 +1,12 @@
 package com.example.springai.pipeline.listener;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import com.ctrip.framework.apollo.Config;
 import com.ctrip.framework.apollo.ConfigService;
 import com.ctrip.framework.apollo.model.ConfigChangeEvent;
 import com.example.springai.pipeline.intent.L1RuleRegistry;
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -24,18 +24,14 @@ import java.util.Set;
  */
 @Component
 @ConditionalOnProperty(name = "apollo.bootstrap.enabled", havingValue = "true")
+@Slf4j
+@RequiredArgsConstructor
 public class L1ApolloRuleListener {
-
-    private static final Logger log = LoggerFactory.getLogger(L1ApolloRuleListener.class);
 
     private final L1RuleRegistry ruleRegistry;
 
     @Value("${apollo.rules.namespace:agent.l1.rules}")
     private String rulesNamespace;
-
-    public L1ApolloRuleListener(L1RuleRegistry ruleRegistry) {
-        this.ruleRegistry = ruleRegistry;
-    }
 
     @PostConstruct
     public void init() {

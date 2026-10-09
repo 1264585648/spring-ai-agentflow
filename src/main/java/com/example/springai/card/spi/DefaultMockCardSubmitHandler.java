@@ -1,9 +1,8 @@
 package com.example.springai.card.spi;
 
+import lombok.extern.slf4j.Slf4j;
 import com.example.springai.card.dto.CardSubmitRequest;
 import com.example.springai.card.dto.CardSubmitResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -18,9 +17,9 @@ import java.util.Date;
  */
 @Component
 @Order(Ordered.LOWEST_PRECEDENCE)
+@Slf4j
 public class DefaultMockCardSubmitHandler implements CardSubmitHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(DefaultMockCardSubmitHandler.class);
 
     @Override
     public boolean supports(String cardType) {

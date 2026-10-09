@@ -1,5 +1,8 @@
 package com.example.springai.admin.controller;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
 import com.example.springai.admin.dto.RuleCreateRequest;
 import com.example.springai.admin.dto.RuleResponse;
 import com.example.springai.pipeline.dispatcher.L1ToolCatalog;
@@ -9,8 +12,6 @@ import com.example.springai.pipeline.intent.L1RuleRegistry;
 import com.example.springai.pipeline.repository.RuleDefinitionRepository;
 import com.example.springai.pipeline.sync.ClusterSyncResult;
 import com.example.springai.pipeline.sync.L1ClusterSync;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
@@ -23,7 +24,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
-import java.util.stream.Collectors;
 
 /**
  * L1 规则管理后台 REST API 控制器。
@@ -32,9 +32,9 @@ import java.util.stream.Collectors;
 @CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/v1/admin/rules")
+@Slf4j
+@RequiredArgsConstructor
 public class L1RuleAdminController {
-
-    private static final Logger log = LoggerFactory.getLogger(L1RuleAdminController.class);
 
     private static final Set<String> MATCH_TYPES = Set.of("EXACT", "PREFIX", "REGEX");
     private static final Set<String> TARGET_TYPES = Set.of("TOOL", "STATIC_TEXT", "INTERACTIVE_CARD", "WORKFLOW");
@@ -45,24 +45,12 @@ public class L1RuleAdminController {
     private final L1ToolCatalog toolCatalog;
     private final L1ClusterSync clusterSync;
 
-    public L1RuleAdminController(RuleDefinitionRepository ruleRepository,
-                                 ApplicationEventPublisher eventPublisher,
-                                 L1RuleRegistry ruleRegistry,
-                                 L1ToolCatalog toolCatalog,
-                                 L1ClusterSync clusterSync) {
-        this.ruleRepository = ruleRepository;
-        this.eventPublisher = eventPublisher;
-        this.ruleRegistry = ruleRegistry;
-        this.toolCatalog = toolCatalog;
-        this.clusterSync = clusterSync;
-    }
-
     @GetMapping
     public ResponseEntity<List<RuleResponse>> listRules() {
         List<RuleDefinitionEntity> entities = ruleRepository.findAll(Sort.by(Sort.Direction.ASC, "priority"));
         List<RuleResponse> responses = entities.stream()
                 .map(RuleResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
         return ResponseEntity.ok(responses);
     }
 
@@ -88,16 +76,16 @@ public class L1RuleAdminController {
 
     @PostMapping
     public ResponseEntity<?> createRule(@RequestBody RuleCreateRequest req) {
-        if (req.getRuleCode() == null || req.getRuleCode().trim().isEmpty()) {
+        if (!StringUtils.hasText(req.getRuleCode())) {
             return badRequest("ruleCode 不能为空");
         }
-        if (req.getRuleName() == null || req.getRuleName().trim().isEmpty()) {
+        if (!StringUtils.hasText(req.getRuleName())) {
             return badRequest("ruleName 不能为空");
         }
-        if (req.getPatternExpr() == null || req.getPatternExpr().trim().isEmpty()) {
+        if (!StringUtils.hasText(req.getPatternExpr())) {
             return badRequest("patternExpr 不能为空");
         }
-        if (req.getTargetRef() == null || req.getTargetRef().trim().isEmpty()) {
+        if (!StringUtils.hasText(req.getTargetRef())) {
             return badRequest("targetRef 不能为空");
         }
         if (ruleRepository.findByRuleCode(req.getRuleCode().trim()).isPresent()) {

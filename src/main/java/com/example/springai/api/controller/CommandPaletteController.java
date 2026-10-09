@@ -1,5 +1,6 @@
 package com.example.springai.api.controller;
 
+import lombok.RequiredArgsConstructor;
 import com.example.springai.pipeline.dto.CommandPaletteItem;
 import com.example.springai.pipeline.intent.L1RuleRegistry;
 import org.springframework.http.ResponseEntity;
@@ -17,13 +18,10 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/commands")
 @CrossOrigin(origins = "*")
+@RequiredArgsConstructor
 public class CommandPaletteController {
 
     private final L1RuleRegistry ruleRegistry;
-
-    public CommandPaletteController(L1RuleRegistry ruleRegistry) {
-        this.ruleRegistry = ruleRegistry;
-    }
 
     /**
      * 获取全量可用快捷指令清单 (纯内存无锁读取，响应 < 1ms)

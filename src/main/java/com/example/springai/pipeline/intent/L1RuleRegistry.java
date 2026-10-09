@@ -1,12 +1,11 @@
 package com.example.springai.pipeline.intent;
 
+import lombok.extern.slf4j.Slf4j;
 import com.example.springai.pipeline.dto.CommandPaletteItem;
 import com.example.springai.pipeline.entity.RuleDefinitionEntity;
 import com.example.springai.pipeline.event.L1RuleReloadEvent;
 import com.example.springai.pipeline.repository.RuleDefinitionRepository;
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -26,9 +25,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * 4. 旁路异步审计: 命中统计交由 agentAsyncPostExecutor 线程池异步落库，绝不阻塞用户通信主线程。
  */
 @Component
+@Slf4j
 public class L1RuleRegistry {
 
-    private static final Logger log = LoggerFactory.getLogger(L1RuleRegistry.class);
 
     private final RuleDefinitionRepository ruleRepository;
     private final Executor asyncExecutor;

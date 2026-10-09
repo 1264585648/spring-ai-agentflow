@@ -1,7 +1,6 @@
 package com.example.springai.tool;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
@@ -13,9 +12,9 @@ import org.springframework.stereotype.Component;
  * 3. 涵盖 GitHub 核心资产：仓库(Repository)、工单(Issue)、代码评审(Pull Request) 与构建流水线(Actions Workflow)。
  */
 @Component("githubApiTool")
+@Slf4j
 public class GitHubApiTool {
 
-    private static final Logger log = LoggerFactory.getLogger(GitHubApiTool.class);
 
     @Tool(description = "根据仓库全名 (如 spring-projects/spring-ai 或 owner/repo) 查询 GitHub 仓库概况、Star/Fork 数与活跃分支")
     public String queryRepo(String repo) {

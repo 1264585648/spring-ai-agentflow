@@ -1,8 +1,7 @@
 package com.example.springai.config;
 
+import lombok.extern.slf4j.Slf4j;
 import com.example.springai.pipeline.agent.AgentChatClientFactory;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ChatClientBuilderCustomizer;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
@@ -17,9 +16,9 @@ import org.springframework.context.annotation.Configuration;
  * 3. 各专业 Agent 通过 AgentChatClientFactory 派生各自专属的 ChatClient。
  */
 @Configuration
+@Slf4j
 public class ChatClientConfig {
 
-    private static final Logger log = LoggerFactory.getLogger(ChatClientConfig.class);
 
     /**
      * 全局 ChatClient.Builder 定制器：

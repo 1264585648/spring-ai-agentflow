@@ -109,4 +109,65 @@ class AgentPromptRegistryTest {
         assertFalse(prompt.contains("机密提示词"));
         assertTrue(prompt.contains("客观、严谨、条理清晰"));
     }
+
+    @Test
+    @DisplayName("测试 MasterAgent 动态组装业务子专家清单：新增与下线专家时 Prompt 实时增减")
+    void testMasterAgentPromptDynamicAssembly() {
+        AgentDefinitionRepository mockRepo = mock(AgentDefinitionRepository.class);
+        when(mockRepo.findAll()).thenReturn(List.of());
+
+        AgentPromptRegistry registry = new AgentPromptRegistry(mockRepo);
+        registry.init();
+
+        // 1. 验证默认初始化状态下的 MasterAgent 提示词
+        String initialPrompt = registry.getSystemPrompt(AgentType.MASTER_AGENT);
+        assertNotNull(initialPrompt);
+        assertTrue(initialPrompt.contains("MasterAgent"), "应包含 MasterAgent 基底人设");
+        assertTrue(initialPrompt.contains("【当前已挂载的可调度业务专家清单（动态热装载）】"));
+
+        // 验证 4 个默认在线业务专家均被动态注入
+        assertTrue(initialPrompt.contains("[GITHUB_ISSUE_AGENT]"));
+        assertTrue(initialPrompt.contains("[GITHUB_PR_AGENT]"));
+        assertTrue(initialPrompt.contains("[GITHUB_RELEASE_AGENT]"));
+        assertTrue(initialPrompt.contains("[GITHUB_WORKFLOW_AGENT]"));
+
+        // 验证非业务层的 QUERY_REWRITER 不会作为业务专家被注入
+        assertFalse(initialPrompt.contains("[QUERY_REWRITER]"));
+
+        // 2. 模拟动态新增一个业务专家 (如：依赖漏洞安全扫描专家)
+        AgentDefinition securityExpert = AgentDefinition.builder()
+                .agentCode("SECURITY_SCAN_AGENT")
+                .agentName("依赖安全漏洞扫描专家")
+                .layer("BUSINESS")
+                .systemPrompt("扫描仓库 CVE 依赖安全")
+                .dispatchDesc("负责检查 pom.xml 与 package.json 依赖中的已知安全漏洞与合规许可证风险")
+                .status("ONLINE")
+                .isEnabled(1)
+                .build();
+        registry.registerOrUpdate(securityExpert);
+
+        // 再次获取 MasterAgent 提示词，验证已无锁感知并动态包含了新专家
+        String updatedPrompt = registry.getSystemPrompt(AgentType.MASTER_AGENT);
+        assertTrue(updatedPrompt.contains("[SECURITY_SCAN_AGENT]"), "MasterAgent 必须自动纳入新注册的在线专家");
+        assertTrue(updatedPrompt.contains("负责检查 pom.xml 与 package.json 依赖中的已知安全漏洞"));
+
+        // 3. 模拟动态下线一个专家 (将 GITHUB_RELEASE_AGENT 标记为 OFFLINE)
+        AgentDefinition offlineRelease = AgentDefinition.builder()
+                .agentCode(AgentType.GITHUB_RELEASE_AGENT.getCode())
+                .agentName(AgentType.GITHUB_RELEASE_AGENT.getName())
+                .layer("BUSINESS")
+                .systemPrompt("发版提示词")
+                .dispatchDesc("发版描述")
+                .status("OFFLINE")
+                .isEnabled(0)
+                .build();
+        registry.registerOrUpdate(offlineRelease);
+
+        // 验证 MasterAgent 提示词实时剔除了已下线的专家
+        String promptAfterOffline = registry.getSystemPrompt(AgentType.MASTER_AGENT);
+        assertFalse(promptAfterOffline.contains("[GITHUB_RELEASE_AGENT]"), "已下线的专家必须立即从 MasterAgent 调度清单中剔除");
+        // 但其余在线专家依然存在
+        assertTrue(promptAfterOffline.contains("[GITHUB_ISSUE_AGENT]"));
+        assertTrue(promptAfterOffline.contains("[SECURITY_SCAN_AGENT]"));
+    }
 }

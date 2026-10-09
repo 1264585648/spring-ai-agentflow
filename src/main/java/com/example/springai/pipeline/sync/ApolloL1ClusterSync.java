@@ -1,20 +1,19 @@
 package com.example.springai.pipeline.sync;
 
+import lombok.extern.slf4j.Slf4j;
 import com.ctrip.framework.apollo.openapi.client.ApolloOpenApiClient;
 import com.ctrip.framework.apollo.openapi.dto.NamespaceReleaseDTO;
 import com.ctrip.framework.apollo.openapi.dto.OpenItemDTO;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * 通过 Apollo OpenAPI 写入并发布 l1.rules.revision。
  * apollo-client 只能读配置，所以发布必须走 OpenAPI。
  */
+@Slf4j
 public class ApolloL1ClusterSync implements L1ClusterSync {
 
     static final String REVISION_KEY = "l1.rules.revision";
 
-    private static final Logger log = LoggerFactory.getLogger(ApolloL1ClusterSync.class);
 
     private final ApolloOpenApiClient client;
     private final String appId;

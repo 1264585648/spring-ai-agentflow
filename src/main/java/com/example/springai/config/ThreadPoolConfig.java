@@ -1,7 +1,6 @@
 package com.example.springai.config;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -14,9 +13,9 @@ import java.util.concurrent.ThreadPoolExecutor;
  * 严格杜绝全局共享 ForkJoinPool.commonPool()，保障主流程与旁路任务互不抢占资源
  */
 @Configuration
+@Slf4j
 public class ThreadPoolConfig {
 
-    private static final Logger log = LoggerFactory.getLogger(ThreadPoolConfig.class);
 
     private static final int CPU_CORES = Runtime.getRuntime().availableProcessors();
 
