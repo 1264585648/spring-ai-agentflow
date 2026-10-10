@@ -1,22 +1,25 @@
 package com.example.springai.core.pipeline.impl;
 
-import com.example.springai.web.dto.ChatRequest;
+import com.example.springai.capability.database.mock.MockDbAdapter;
+import com.example.springai.capability.database.port.DatabaseDiagnosePort;
+import com.example.springai.capability.database.tool.DatabaseDiagnoseTool;
+import com.example.springai.capability.log.mock.MockLogAdapter;
+import com.example.springai.capability.log.port.LogQueryPort;
+import com.example.springai.capability.log.tool.LogQueryTool;
+import com.example.springai.capability.ops.mock.MockOpsActionAdapter;
+import com.example.springai.capability.ops.tool.OpsActionTool;
+import com.example.springai.core.agent.GeneralChatAgent;
 import com.example.springai.core.card.model.InteractiveCard;
-import com.example.springai.infra.sse.SseEventPublisher;
-import com.example.springai.infra.client.AgentChatClientFactory;
+import com.example.springai.core.routing.IntentMatchResult;
+import com.example.springai.core.routing.L1RuleMatcher;
 import com.example.springai.core.routing.MasterAgentRouter;
 import com.example.springai.core.routing.dto.DispatchPlan;
 import com.example.springai.core.tool.L1ToolDispatcher;
-import com.example.springai.core.routing.IntentMatchResult;
-import com.example.springai.core.routing.L1RuleMatcher;
-import com.example.springai.capability.log.tool.LogQueryTool;
-import com.example.springai.capability.database.tool.DatabaseDiagnoseTool;
-import com.example.springai.capability.ops.tool.OpsActionTool;
-import com.example.springai.capability.ops.mock.MockOpsActionAdapter;
-import com.example.springai.capability.database.mock.MockDbAdapter;
-import com.example.springai.capability.log.mock.MockLogAdapter;
-import com.example.springai.capability.database.port.DatabaseDiagnosePort;
-import com.example.springai.capability.log.port.LogQueryPort;
+import com.example.springai.infra.client.AgentChatClientFactory;
+import com.example.springai.infra.sse.SseEventPublisher;
+import com.example.springai.scenario.troubleshoot.TroubleshootCardFactory;
+import com.example.springai.scenario.troubleshoot.TroubleshootSubAgent;
+import com.example.springai.web.dto.ChatRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,6 +45,8 @@ class AgentPipelineServiceImplTest {
     private LogQueryTool logQueryTool;
     private DatabaseDiagnoseTool databaseDiagnoseTool;
     private OpsActionTool opsActionTool;
+    private TroubleshootSubAgent troubleshootSubAgent;
+    private GeneralChatAgent generalChatAgent;
     private Executor directExecutor;
 
     private AgentPipelineServiceImpl pipelineService;
@@ -67,6 +72,17 @@ class AgentPipelineServiceImplTest {
         databaseDiagnoseTool = new DatabaseDiagnoseTool(databaseDiagnosePort);
         opsActionTool = new OpsActionTool(new MockOpsActionAdapter());
 
+        troubleshootSubAgent = new TroubleshootSubAgent(
+                chatClientFactory,
+                logQueryPort,
+                databaseDiagnosePort,
+                logQueryTool,
+                databaseDiagnoseTool,
+                opsActionTool,
+                new TroubleshootCardFactory()
+        );
+        generalChatAgent = new GeneralChatAgent(chatClientFactory);
+
         // 使用同步直接执行器以确保单测可预测完成
         directExecutor = Runnable::run;
 
@@ -74,13 +90,9 @@ class AgentPipelineServiceImplTest {
                 ssePublisher,
                 l1RuleMatcher,
                 l1ToolDispatcher,
-                chatClientFactory,
                 masterAgentRouter,
-                logQueryPort,
-                databaseDiagnosePort,
-                logQueryTool,
-                databaseDiagnoseTool,
-                opsActionTool,
+                List.of(troubleshootSubAgent),
+                generalChatAgent,
                 directExecutor
         );
     }
@@ -144,9 +156,9 @@ class AgentPipelineServiceImplTest {
         pipelineService.process(request);
 
         // 1. 验证下发思考链
-        verify(ssePublisher).sendThinking(eq("sess_103"), contains("MasterAgent 正在分析排障诉求"));
+        verify(ssePublisher).sendThinking(eq("sess_103"), contains("MasterAgent 正在分析诉求"));
 
-        // 2. 验证智能体委派进度
+        // 2. 验证智能体委派进度 (由 TroubleshootSubAgent 输出)
         verify(ssePublisher).sendProgress(eq("sess_103"), eq("AGENT_DISPATCH"), contains("日志异常分析智能体"));
 
         // 3. 验证文本流式输出 (包含降级时从 MockLogAdapter / MockDbAdapter 提取的排障结论)
