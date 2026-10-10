@@ -148,4 +148,61 @@ class MasterAgentRouterTest {
         assertEquals(PlanType.FALLBACK, chatPlan.getPlanType());
         assertTrue(chatPlan.getReason().contains("未命中已挂载的特定业务专家"));
     }
+
+    @Test
+    @DisplayName("测试动态注册中心感知：动态新增在线专家无需改代码即可被自动研判与路由 (M2)")
+    void testDynamicOnlineAgentRouting() {
+        AgentDefinition netAgent = AgentDefinition.builder()
+                .agentCode("NET_DIAGNOSE_AGENT")
+                .agentName("网络与链路诊断智能体")
+                .dispatchDesc("负责网络丢包、DNS解析超时、重传与网络抖动排查")
+                .status("ONLINE")
+                .isEnabled(1)
+                .layer("BUSINESS")
+                .build();
+
+        AgentDefinition logAgent = AgentDefinition.builder()
+                .agentCode("LOG_DIAGNOSE_AGENT")
+                .agentName("日志异常分析智能体")
+                .status("ONLINE").isEnabled(1).layer("BUSINESS").build();
+
+        when(mockRegistry.getOnlineBusinessAgents())
+                .thenReturn(List.of(logAgent, netAgent));
+
+        String query = "帮我排查一下 DNS 解析超时和网络丢包";
+        DispatchPlan plan = router.route(query);
+
+        assertNotNull(plan);
+        assertEquals(PlanType.SINGLE, plan.getPlanType());
+        assertEquals(1, plan.getSteps().size());
+        DispatchStep step = plan.getSteps().get(0);
+        assertEquals("NET_DIAGNOSE_AGENT", step.getTargetAgent());
+        assertEquals("网络与链路诊断智能体", step.getTargetAgentName());
+        assertTrue(step.getTaskDesc().contains("网络丢包") || step.getTaskDesc().contains("DNS"));
+    }
+
+    @Test
+    @DisplayName("测试动态下线专家防线：动态注册专家若处于下线状态，安全拦截并降级为 FALLBACK (M2)")
+    void testDynamicOfflineAgentBlocked() {
+        AgentDefinition cicdAgent = AgentDefinition.builder()
+                .agentCode("CICD_DEPLOY_AGENT")
+                .agentName("发布构建协同智能体")
+                .dispatchDesc("负责部署流水线发布构建、镜像打包与容器滚动发布排查")
+                .status("OFFLINE")
+                .isEnabled(0)
+                .layer("BUSINESS")
+                .build();
+
+        when(mockRegistry.getOnlineBusinessAgents())
+                .thenReturn(java.util.Collections.emptyList());
+        when(mockRegistry.getAllAgents())
+                .thenReturn(List.of(cicdAgent));
+
+        String query = "帮我查看部署流水线发布构建";
+        DispatchPlan plan = router.route(query);
+
+        assertNotNull(plan);
+        assertEquals(PlanType.FALLBACK, plan.getPlanType());
+        assertTrue(plan.getReason().contains("处于下线状态"));
+    }
 }

@@ -2,6 +2,7 @@ package com.example.springai.core.routing;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.example.springai.core.agent.AgentDefinition;
 import com.example.springai.core.agent.AgentPromptRegistry;
 import com.example.springai.core.agent.AgentType;
 import com.example.springai.core.routing.dto.DispatchPlan;
@@ -20,7 +21,8 @@ import java.util.regex.Pattern;
  * 1. 研判用户输入的意图特征与任务复杂度；
  * 2. 识别单意图直通 vs 复合多意图依赖编排；
  * 3. 联动 AgentPromptRegistry 校验目标专家在线状态（防悬挂调度）；
- * 4. 产出强类型的调度计划契约 (DispatchPlan)。
+ * 4. 支持元数据驱动的业务专家动态发现与分发 (Data-Driven Dynamic Routing)；
+ * 5. 产出强类型的调度计划契约 (DispatchPlan)。
  */
 @Component
 @Slf4j
@@ -84,7 +86,40 @@ public class MasterAgentRouter {
             );
         }
 
-        // 5. 若挂载了通用智能体，直通 GENERAL_AGENT
+        // 5. 动态业务专家元数据感知与分发 (Data-Driven Dynamic Routing)
+        if (promptRegistry != null) {
+            List<AgentDefinition> onlineAgents = promptRegistry.getOnlineBusinessAgents();
+            if (onlineAgents != null) {
+                for (AgentDefinition agent : onlineAgents) {
+                    if (isPredefinedAgent(agent.getAgentCode())) {
+                        continue; // 已在上方内置优先处理
+                    }
+                    if (matchesAgentMetadata(text, agent)) {
+                        log.info("[MasterRouter] ⚡ 动态元数据命中在线业务专家: code={}, name={}",
+                                agent.getAgentCode(), agent.getAgentName());
+                        String taskDesc = StringUtils.hasText(agent.getDispatchDesc())
+                                ? agent.getDispatchDesc()
+                                : "执行 " + agent.getAgentName() + " 业务协同";
+                        return planSingleExpert(agent.getAgentCode(), agent.getAgentName(), taskDesc, contextParams);
+                    }
+                }
+            }
+
+            // 检查是否有匹配的动态业务专家当前处于下线状态
+            List<AgentDefinition> allAgents = promptRegistry.getAllAgents();
+            if (allAgents != null) {
+                for (AgentDefinition agent : allAgents) {
+                    if (!isPredefinedAgent(agent.getAgentCode())
+                            && !isAgentOnline(agent.getAgentCode())
+                            && matchesAgentMetadata(text, agent)) {
+                        log.warn("[MasterRouter] ⚠️ 动态匹配到的业务专家 [{}] 当前处于下线状态", agent.getAgentCode());
+                        return DispatchPlan.fallback("目标业务专家 [" + agent.getAgentName() + " (" + agent.getAgentCode() + ")] 当前处于下线状态，无法响应此诉求");
+                    }
+                }
+            }
+        }
+
+        // 6. 若挂载了通用智能体，直通 GENERAL_AGENT
         if (isAgentOnline(AgentType.GENERAL_AGENT.getCode())) {
             log.info("[MasterRouter] 未匹配到特定的专业排障专家, 转入通用智能体协同, query: {}", text);
             return planSingleExpert(
@@ -95,7 +130,7 @@ public class MasterAgentRouter {
             );
         }
 
-        // 6. 优雅降级为 FALLBACK
+        // 7. 优雅降级为 FALLBACK
         log.info("[MasterRouter] 未匹配到特定的专业业务专家, 降级处理, query: {}", text);
         return DispatchPlan.fallback("当前诉求未命中已挂载的特定业务专家，建议输入 /help 查看排障与系统指令");
     }
@@ -193,7 +228,7 @@ public class MasterAgentRouter {
         return lower.contains("log") || lower.contains("日志") || lower.contains("报错")
                 || lower.contains("error") || lower.contains("exception") || lower.contains("堆栈")
                 || lower.contains("trace") || lower.contains("504") || lower.contains("500")
-                || lower.contains("502") || lower.contains("oom") || lower.contains("超时");
+                || lower.contains("502") || lower.contains("oom");
     }
 
     private boolean isDbRelated(String text) {
@@ -209,5 +244,60 @@ public class MasterAgentRouter {
         return lower.contains("止血") || lower.contains("kill") || lower.contains("重启")
                 || lower.contains("扩容") || lower.contains("降级") || lower.contains("熔断")
                 || lower.contains("工单") || lower.contains("处置") || lower.contains("sop");
+    }
+
+    private boolean isPredefinedAgent(String code) {
+        if (code == null) return false;
+        return AgentType.LOG_DIAGNOSE_AGENT.getCode().equalsIgnoreCase(code)
+                || AgentType.DB_DIAGNOSE_AGENT.getCode().equalsIgnoreCase(code)
+                || AgentType.SRE_COPILOT_AGENT.getCode().equalsIgnoreCase(code)
+                || AgentType.GENERAL_AGENT.getCode().equalsIgnoreCase(code)
+                || AgentType.MASTER_AGENT.getCode().equalsIgnoreCase(code)
+                || AgentType.QUERY_REWRITER.getCode().equalsIgnoreCase(code);
+    }
+
+    private boolean matchesAgentMetadata(String query, AgentDefinition agent) {
+        if (agent == null || !StringUtils.hasText(query)) {
+            return false;
+        }
+        String lowerQuery = query.toLowerCase(Locale.ROOT);
+
+        // 1. 匹配 agentName
+        if (StringUtils.hasText(agent.getAgentName())) {
+            String cleanName = agent.getAgentName().replace("智能体", "").replace("专家", "").trim().toLowerCase(Locale.ROOT);
+            if (cleanName.length() >= 2 && lowerQuery.contains(cleanName)) {
+                return true;
+            }
+        }
+
+        // 2. 匹配 agentCode (去除 _AGENT 后缀)
+        if (StringUtils.hasText(agent.getAgentCode())) {
+            String codePrefix = agent.getAgentCode().replace("_AGENT", "").toLowerCase(Locale.ROOT);
+            if (codePrefix.length() >= 2 && lowerQuery.contains(codePrefix)) {
+                return true;
+            }
+        }
+
+        // 3. 匹配 dispatchDesc 中的词条 (标点符号切分 + 关键词过滤)
+        if (StringUtils.hasText(agent.getDispatchDesc())) {
+            String desc = agent.getDispatchDesc().toLowerCase(Locale.ROOT);
+            String[] tokens = desc.split("[,，、;；\\s]+");
+            for (String token : tokens) {
+                String cleanToken = token.replace("负责", "").replace("进行", "").replace("分析", "").replace("诊断", "").trim();
+                if (cleanToken.length() >= 2 && lowerQuery.contains(cleanToken)) {
+                    return true;
+                }
+            }
+            // 双向支持：提取用户 query 中的短语与 dispatchDesc 进行匹配
+            String[] queryWords = lowerQuery.split("[,，、;；\\s]+");
+            for (String word : queryWords) {
+                String cleanWord = word.trim();
+                if (cleanWord.length() >= 2 && desc.contains(cleanWord)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

@@ -97,4 +97,103 @@ class TroubleshootSubAgentTest {
         verify(mockSink).recommend(recommendCaptor.capture());
         assertFalse(recommendCaptor.getValue().isEmpty());
     }
+
+    @Test
+    @DisplayName("测试 Spring AI 原生 .stream() 响应式真流式 Token 推送与协同卡片 (M2)")
+    void testExecuteTrueStreamingSuccess() {
+        org.springframework.ai.chat.client.ChatClient mockClient = mock(org.springframework.ai.chat.client.ChatClient.class);
+        org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec mockSpec = mock(org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec.class);
+        org.springframework.ai.chat.client.ChatClient.StreamResponseSpec mockStreamSpec = mock(org.springframework.ai.chat.client.ChatClient.StreamResponseSpec.class);
+
+        AgentChatClientFactory factory = mock(AgentChatClientFactory.class);
+        when(factory.createClient(anyString(), any(), any(), any())).thenReturn(mockClient);
+        when(mockClient.prompt()).thenReturn(mockSpec);
+        when(mockSpec.user(anyString())).thenReturn(mockSpec);
+        when(mockSpec.stream()).thenReturn(mockStreamSpec);
+        when(mockStreamSpec.content()).thenReturn(reactor.core.publisher.Flux.just("Token1 ", "Token2 ", "Token3"));
+
+        TroubleshootSubAgent streamingAgent = new TroubleshootSubAgent(
+                factory,
+                new MockLogAdapter(),
+                new MockDbAdapter(),
+                new LogQueryTool(new MockLogAdapter()),
+                new DatabaseDiagnoseTool(new MockDbAdapter()),
+                new OpsActionTool(new MockOpsActionAdapter()),
+                new TroubleshootCardFactory()
+        );
+
+        AgentContext context = AgentContext.builder()
+                .sessionId("sess_ts_stream")
+                .turnId("turn_002")
+                .query("order-service 504 异常分析")
+                .sink(mockSink)
+                .build();
+
+        DispatchStep step = DispatchStep.builder()
+                .stepOrder(1)
+                .targetAgent("LOG_DIAGNOSE_AGENT")
+                .targetAgentName("日志分析专家")
+                .taskDesc("流式诊断日志")
+                .inputParams(Map.of("service", "order-service"))
+                .build();
+
+        streamingAgent.execute(context, step);
+
+        verify(mockSink).message("Token1 ");
+        verify(mockSink).message("Token2 ");
+        verify(mockSink).message("Token3");
+        verify(mockSink).card(any());
+        verify(mockSink).recommend(anyList());
+    }
+
+    @Test
+    @DisplayName("测试客户端断连快速熔断：SSE 发送失败时提前中止大模型流式输出与后续卡片 (M2)")
+    void testClientDisconnectFastAbort() {
+        org.springframework.ai.chat.client.ChatClient mockClient = mock(org.springframework.ai.chat.client.ChatClient.class);
+        org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec mockSpec = mock(org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec.class);
+        org.springframework.ai.chat.client.ChatClient.StreamResponseSpec mockStreamSpec = mock(org.springframework.ai.chat.client.ChatClient.StreamResponseSpec.class);
+
+        AgentChatClientFactory factory = mock(AgentChatClientFactory.class);
+        when(factory.createClient(anyString(), any(), any(), any())).thenReturn(mockClient);
+        when(mockClient.prompt()).thenReturn(mockSpec);
+        when(mockSpec.user(anyString())).thenReturn(mockSpec);
+        when(mockSpec.stream()).thenReturn(mockStreamSpec);
+        when(mockStreamSpec.content()).thenReturn(reactor.core.publisher.Flux.just("Token1", "Token2", "Token3"));
+
+        AgentEventSink disconnectSink = mock(AgentEventSink.class);
+        when(disconnectSink.progress(anyString(), anyString())).thenReturn(true);
+        when(disconnectSink.message("Token1")).thenReturn(true);
+        when(disconnectSink.message("Token2")).thenReturn(false);
+
+        TroubleshootSubAgent streamingAgent = new TroubleshootSubAgent(
+                factory,
+                new MockLogAdapter(),
+                new MockDbAdapter(),
+                new LogQueryTool(new MockLogAdapter()),
+                new DatabaseDiagnoseTool(new MockDbAdapter()),
+                new OpsActionTool(new MockOpsActionAdapter()),
+                new TroubleshootCardFactory()
+        );
+
+        AgentContext context = AgentContext.builder()
+                .sessionId("sess_ts_dc")
+                .turnId("turn_003")
+                .query("order-service 504 异常分析")
+                .sink(disconnectSink)
+                .build();
+
+        DispatchStep step = DispatchStep.builder()
+                .stepOrder(1)
+                .targetAgent("LOG_DIAGNOSE_AGENT")
+                .targetAgentName("日志分析专家")
+                .taskDesc("流式诊断日志")
+                .inputParams(Map.of("service", "order-service"))
+                .build();
+
+        streamingAgent.execute(context, step);
+
+        verify(disconnectSink, never()).message("Token3");
+        verify(disconnectSink, never()).card(any());
+        verify(disconnectSink, never()).recommend(anyList());
+    }
 }

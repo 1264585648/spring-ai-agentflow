@@ -129,25 +129,36 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                 }
 
                 // 3. 提取执行步骤并派发至匹配的 SubAgent 插件
-                DispatchStep primaryStep = (plan.getSteps() != null && !plan.getSteps().isEmpty())
-                        ? plan.getSteps().get(0)
-                        : null;
-                String targetAgentCode = (primaryStep != null && primaryStep.getTargetAgent() != null)
-                        ? primaryStep.getTargetAgent()
-                        : AgentType.GENERAL_AGENT.getCode();
+                if (plan.getPlanType() == PlanType.FALLBACK) {
+                    if (plan.getReason() != null) {
+                        context.getSink().message(plan.getReason());
+                    } else {
+                        defaultGeneralAgent.execute(context, null);
+                    }
+                    context.getSink().done();
+                    log.info("[Pipeline] 流水线降级结束, sessionId: {}", sessionId);
+                    return;
+                }
 
-                SubAgent matchedSubAgent = subAgents.stream()
-                        .filter(agent -> agent.supports(targetAgentCode))
-                        .findFirst()
-                        .orElse(defaultGeneralAgent);
+                List<DispatchStep> steps = plan.getSteps();
+                if (steps != null && !steps.isEmpty()) {
+                    for (DispatchStep step : steps) {
+                        String targetAgentCode = step.getTargetAgent();
+                        SubAgent matchedSubAgent = subAgents.stream()
+                                .filter(agent -> agent.supports(targetAgentCode))
+                                .findFirst()
+                                .orElse(defaultGeneralAgent);
 
-                log.debug("[Pipeline] 匹配到 SubAgent 插件: {} (targetCode: {})",
-                        matchedSubAgent.getClass().getSimpleName(), targetAgentCode);
+                        log.debug("[Pipeline] 派发 SubAgent 插件 (step {}): {} (targetCode: {})",
+                                step.getStepOrder(), matchedSubAgent.getClass().getSimpleName(), targetAgentCode);
 
-                // 4. 执行场景插件业务逻辑
-                matchedSubAgent.execute(context, primaryStep);
+                        matchedSubAgent.execute(context, step);
+                    }
+                } else {
+                    defaultGeneralAgent.execute(context, null);
+                }
 
-                // 5. 结束当前对话回合
+                // 4. 结束当前对话回合
                 context.getSink().done();
                 log.info("[Pipeline] 流水线执行完成, sessionId: {}", sessionId);
 

@@ -21,6 +21,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
+import reactor.core.publisher.Flux;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -82,11 +84,15 @@ public class TroubleshootSubAgent implements SubAgent {
         // 1. 发送专家委派进度
         context.getSink().progress("AGENT_DISPATCH", "已委派专家 [" + targetAgentName + "] 深入排障...");
 
-        // 2. 驱动大模型推理与工具调用，异常时平滑降级
-        String responseText;
+        // 2. 驱动大模型推理与工具调用（Spring AI 原生 .stream() 响应式真流式），异常时平滑降级
+        boolean clientActive = true;
         try {
             ChatClient agentClient = chatClientFactory.createClient(targetAgentCode,
                     logQueryTool, databaseDiagnoseTool, opsActionTool);
+            if (agentClient == null) {
+                throw new IllegalStateException("ChatClient 未能正确初始化");
+            }
+
             String prompt = String.format("""
                     工程师故障描述/提问: %s
                     
@@ -101,21 +107,43 @@ public class TroubleshootSubAgent implements SubAgent {
                     3. 应急止血与长期优化措施。
                     """, query, targetAgentName, step != null ? step.getTaskDesc() : "", contextParams);
 
-            responseText = agentClient.prompt()
+            Flux<String> streamFlux = agentClient.prompt()
                     .user(prompt)
-                    .call()
+                    .stream()
                     .content();
+
+            if (streamFlux == null) {
+                throw new IllegalStateException("大模型底座未返回有效流式响应");
+            }
+
+            AtomicBoolean aborted = new AtomicBoolean(false);
+            streamFlux.takeWhile(token -> !aborted.get())
+                    .doOnNext(token -> {
+                        if (token != null && !token.isEmpty()) {
+                            boolean ok = context.getSink().message(token);
+                            if (!ok) {
+                                aborted.set(true);
+                                log.info("[TroubleshootSubAgent] 客户端断开连接，快速熔断流式生成");
+                            }
+                        }
+                    })
+                    .blockLast();
+
+            if (aborted.get()) {
+                clientActive = false;
+            }
         } catch (Exception ex) {
             log.warn("[TroubleshootSubAgent] 大模型底座未配置有效 API-Key 或调用超时 ({})，启动排障标准端口协同直出", ex.getMessage());
-            responseText = buildFallbackExpertReply(query, contextParams);
+            String responseText = buildFallbackExpertReply(query, contextParams);
+            clientActive = streamText(context, responseText, DEMO_CHUNK_DELAY_MS);
         }
 
-        // 3. 打字机流式回传分析结论
-        if (!streamText(context, responseText, DEMO_CHUNK_DELAY_MS)) {
+        if (!clientActive) {
+            log.info("[TroubleshootSubAgent] 客户端已断开或取消，中止后续交互卡片与追问下发");
             return;
         }
 
-        // 4. 挂载标准排障应急处置卡片 (Human-in-the-loop)
+        // 3. 挂载标准排障应急处置卡片 (Human-in-the-loop)
         String service = contextParams.get("service") != null
                 ? String.valueOf(contextParams.get("service"))
                 : "order-service";
@@ -124,7 +152,7 @@ public class TroubleshootSubAgent implements SubAgent {
             return;
         }
 
-        // 5. 推送智能延伸推荐问题
+        // 4. 推送智能延伸推荐问题
         context.getSink().recommend(List.of(
                 "如何提取该异常时间窗口内的全链路分布式 Trace？",
                 "查询该服务数据库连接池当前的活跃与空闲连接水位",

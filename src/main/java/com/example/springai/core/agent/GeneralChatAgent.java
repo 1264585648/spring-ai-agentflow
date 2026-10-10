@@ -8,6 +8,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
+import reactor.core.publisher.Flux;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * 通用对话兜底智能体 (GeneralChatAgent)
  * 职责:
@@ -44,29 +47,57 @@ public class GeneralChatAgent implements SubAgent {
 
         context.getSink().progress("AGENT_DISPATCH", "已委派通用协同专家提供解答...");
 
-        String replyText;
+        boolean clientActive = true;
         try {
             ChatClient client = chatClientFactory.createClient(name());
-            replyText = client.prompt()
+            if (client == null) {
+                throw new IllegalStateException("ChatClient 未能正确初始化");
+            }
+
+            Flux<String> streamFlux = client.prompt()
                     .user(query)
-                    .call()
+                    .stream()
                     .content();
+
+            if (streamFlux == null) {
+                throw new IllegalStateException("大模型底座未返回有效流式响应");
+            }
+
+            AtomicBoolean aborted = new AtomicBoolean(false);
+            streamFlux.takeWhile(token -> !aborted.get())
+                    .doOnNext(token -> {
+                        if (token != null && !token.isEmpty()) {
+                            boolean ok = context.getSink().message(token);
+                            if (!ok) {
+                                aborted.set(true);
+                                log.info("[GeneralChatAgent] 客户端断开连接，快速熔断流式生成");
+                            }
+                        }
+                    })
+                    .blockLast();
+
+            if (aborted.get()) {
+                clientActive = false;
+            }
         } catch (Exception ex) {
             log.warn("[GeneralChatAgent] 大模型底座调用异常 ({})，启动通用兜底回复", ex.getMessage());
-            replyText = "您好！我是企业级通用协同助手。您的问题已收到（`" + query + "`），当前大模型底座暂未连接或超时，您可以稍后再试或通过具体快捷指令与我互动。";
+            String replyText = "您好！我是企业级通用协同助手。您的问题已收到（`" + query + "`），当前大模型底座暂未连接或超时，您可以稍后再试或通过具体快捷指令与我互动。";
+            clientActive = streamText(context, replyText);
         }
 
-        streamText(context, replyText);
+        if (!clientActive) {
+            log.info("[GeneralChatAgent] 客户端已断开或取消，流式推送终止");
+        }
     }
 
-    private void streamText(AgentContext context, String text) {
+    private boolean streamText(AgentContext context, String text) {
         if (text == null || text.isEmpty()) {
-            return;
+            return true;
         }
         for (int offset = 0; offset < text.length(); ) {
             int end = Math.min(text.length(), offset + STREAM_CHUNK_SIZE);
             if (!context.getSink().message(text.substring(offset, end))) {
-                return;
+                return false;
             }
             offset = end;
             if (offset < text.length() && CHUNK_DELAY_MS > 0) {
@@ -74,9 +105,10 @@ public class GeneralChatAgent implements SubAgent {
                     Thread.sleep(CHUNK_DELAY_MS);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    return;
+                    return false;
                 }
             }
         }
+        return true;
     }
 }
