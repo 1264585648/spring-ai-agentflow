@@ -4,7 +4,7 @@ import lombok.Getter;
 
 /**
  * 企业多智能体矩阵角色枚举定义 (AgentType)
- * 严格对应 04-企业多智能体职责矩阵与分层设计 (基于 GitHub API 研发协同与开源运维体系)
+ * 严格对应企业多智能体职责矩阵与分层设计 (基于智能运维与排障体系)
  * 统一收敛智能体编码、友好名称、默认推荐采样温度与职责描述
  */
 @Getter
@@ -17,57 +17,57 @@ public enum AgentType {
             "QUERY_REWRITER",
             "会话分析与查询重写智能体",
             0.1,
-            "负责多轮研发协同会话指代消除、补齐 owner/repo 仓库名与 Issue/PR 编号，输出规范查询"
+            "负责多轮协同会话指代消除、提取关键服务与单号，输出规范查询"
     ),
 
     /**
-     * GitHub 协同主协调调度智能体 (协调层 ReActAgent - 管道核心)
+     * 主协调调度智能体 (协调层 ReActAgent - 管道核心)
      */
     MASTER_AGENT(
             "MASTER_AGENT",
-            "GitHub 协同主协调调度智能体",
+            "主协调调度智能体",
             0.2,
-            "负责 GitHub 研发任务依赖拆解、子专家协同调度与多源分析结果聚合"
+            "负责复杂任务与故障依赖拆解、子专家协同调度与多源分析结果聚合"
     ),
 
     /**
-     * GitHub Issue 治理与表单装配智能体 (业务层 ReActAgent)
+     * 通用对话与协同智能体 (通用兜底)
      */
-    GITHUB_ISSUE_AGENT(
-            "GITHUB_ISSUE_AGENT",
-            "Issue 治理与表单装配智能体",
-            0.2,
-            "负责 GitHub Issue 检索关联、Bug 分类标签判定、重复问题排查与提单卡片装配"
+    GENERAL_AGENT(
+            "GENERAL_AGENT",
+            "通用对话与协同智能体",
+            0.7,
+            "负责通用对话交互、综合问答与兜底业务处理"
     ),
 
     /**
-     * GitHub Pull Request 代码审查智能体 (业务层 ReActAgent)
+     * 日志异常分析智能体 (业务层 ReActAgent)
      */
-    GITHUB_PR_AGENT(
-            "GITHUB_PR_AGENT",
-            "Pull Request 代码审查智能体",
-            0.2,
-            "负责 GitHub Pull Request 代码差异比对、安全与规范审查、合并冲突与风险评估"
-    ),
-
-    /**
-     * GitHub Release 版本发布与 Changelog 智能体 (业务层 ReActAgent)
-     */
-    GITHUB_RELEASE_AGENT(
-            "GITHUB_RELEASE_AGENT",
-            "Release 版本发布与 Changelog 智能体",
-            0.3,
-            "负责版本发布、Git Tag 比对、自动提取 Changelog 与发版确认卡片装配"
-    ),
-
-    /**
-     * GitHub CI/CD 流水线与排障智能体 (业务层 ReActAgent)
-     */
-    GITHUB_WORKFLOW_AGENT(
-            "GITHUB_WORKFLOW_AGENT",
-            "CI/CD 流水线与排障智能体",
+    LOG_DIAGNOSE_AGENT(
+            "LOG_DIAGNOSE_AGENT",
+            "日志异常分析智能体",
             0.1,
-            "排查 GitHub Actions 工作流构建失败、解析测试报错日志并给出修复步骤"
+            "负责服务日志检索、异常堆栈解析、Trace 分布式链路排查与已知故障库比对"
+    ),
+
+    /**
+     * 数据库诊断智能体 (业务层 ReActAgent)
+     */
+    DB_DIAGNOSE_AGENT(
+            "DB_DIAGNOSE_AGENT",
+            "数据库诊断智能体",
+            0.1,
+            "负责数据库慢SQL检索、死锁与长事务分析、连接池水位诊断与性能调优建议"
+    ),
+
+    /**
+     * 应急止血与运维协同智能体 (业务层 ReActAgent)
+     */
+    SRE_COPILOT_AGENT(
+            "SRE_COPILOT_AGENT",
+            "应急止血与运维协同智能体",
+            0.2,
+            "负责故障综合研判、制定应急止血处置方案、装配确认卡片并引导工程师核验执行"
     );
 
     /**

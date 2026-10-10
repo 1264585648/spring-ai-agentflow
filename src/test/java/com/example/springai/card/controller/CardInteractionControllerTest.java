@@ -57,24 +57,24 @@ class CardInteractionControllerTest {
     }
 
     @Test
-    void testGitHubIssueCardSubmission() {
-        com.example.springai.card.spi.GitHubIssueCardSubmitHandler handler = new com.example.springai.card.spi.GitHubIssueCardSubmitHandler();
+    void testTroubleshootCardSubmission() {
+        com.example.springai.card.spi.TroubleshootCardSubmitHandler handler = new com.example.springai.card.spi.TroubleshootCardSubmitHandler();
         SseEventPublisher publisher = mock(SseEventPublisher.class);
         CardInteractionController controller = new CardInteractionController(List.of(handler), publisher);
 
         CardSubmitRequest request = new CardSubmitRequest();
-        request.setActionId("act-gh-101");
-        request.setSessionId("sess-gh-1");
-        request.setCardType("GITHUB_ISSUE_SUBMIT");
+        request.setActionId("act-ops-101");
+        request.setSessionId("sess-ops-1");
+        request.setCardType("TROUBLESHOOT_ACTION");
         request.setFormValues(Map.of(
-                "repo", "spring-projects/spring-ai",
-                "title", "[Bug]: Redis pool leak under high concurrency"
+                "service", "order-service",
+                "action_type", "Kill阻塞慢查询并临时扩容连接池"
         ));
 
         ResponseEntity<Map<String, Object>> response = controller.submitCard(request);
         assertEquals(200, response.getStatusCode().value());
         assertNotNull(response.getBody().get("ticketId"));
-        org.junit.jupiter.api.Assertions.assertTrue(String.valueOf(response.getBody().get("ticketId")).startsWith("#"));
-        org.junit.jupiter.api.Assertions.assertTrue(String.valueOf(response.getBody().get("message")).contains("spring-projects/spring-ai"));
+        org.junit.jupiter.api.Assertions.assertTrue(String.valueOf(response.getBody().get("ticketId")).startsWith("OPS-"));
+        org.junit.jupiter.api.Assertions.assertTrue(String.valueOf(response.getBody().get("message")).contains("order-service"));
     }
 }

@@ -57,22 +57,22 @@ class ChatClientConfigTest {
         assertEquals(0.1, rewriterOpt.get().getTemperature());
         assertEquals("会话分析与查询重写智能体", rewriterOpt.get().getAgentName());
 
-        // 验证 GitHub Issue 智能体 (通过枚举获取)
-        Optional<AgentDefinition> issueOpt = promptRegistry.getAgent(com.example.springai.pipeline.agent.AgentType.GITHUB_ISSUE_AGENT);
-        assertTrue(issueOpt.isPresent());
-        assertTrue(issueOpt.get().getSystemPrompt().contains("GithubIssueAgent"));
-        assertEquals("Issue 治理与表单装配智能体", issueOpt.get().getAgentName());
+        // 验证 日志诊断 智能体 (通过枚举获取)
+        Optional<AgentDefinition> logOpt = promptRegistry.getAgent(com.example.springai.pipeline.agent.AgentType.LOG_DIAGNOSE_AGENT);
+        assertTrue(logOpt.isPresent());
+        assertTrue(logOpt.get().getSystemPrompt().contains("LogDiagnoseAgent"));
+        assertEquals("日志异常分析智能体", logOpt.get().getAgentName());
 
-        // 验证 GitHub PR 智能体
-        Optional<AgentDefinition> prOpt = promptRegistry.getAgent(com.example.springai.pipeline.agent.AgentType.GITHUB_PR_AGENT);
-        assertTrue(prOpt.isPresent());
-        assertTrue(prOpt.get().getSystemPrompt().contains("GithubPrReviewAgent"));
+        // 验证 数据库诊断 智能体
+        Optional<AgentDefinition> dbOpt = promptRegistry.getAgent(com.example.springai.pipeline.agent.AgentType.DB_DIAGNOSE_AGENT);
+        assertTrue(dbOpt.isPresent());
+        assertTrue(dbOpt.get().getSystemPrompt().contains("DbDiagnoseAgent"));
 
         // 验证枚举安全解析 fromCode
         assertEquals(com.example.springai.pipeline.agent.AgentType.QUERY_REWRITER,
                 com.example.springai.pipeline.agent.AgentType.fromCode("query_rewriter"));
-        assertEquals(com.example.springai.pipeline.agent.AgentType.GITHUB_ISSUE_AGENT,
-                com.example.springai.pipeline.agent.AgentType.fromCode("github_issue_agent"));
+        assertEquals(com.example.springai.pipeline.agent.AgentType.LOG_DIAGNOSE_AGENT,
+                com.example.springai.pipeline.agent.AgentType.fromCode("log_diagnose_agent"));
     }
 
     @Test
@@ -82,14 +82,14 @@ class ChatClientConfigTest {
         ChatClient rewriterClient = clientFactory.createClient(com.example.springai.pipeline.agent.AgentType.QUERY_REWRITER);
         assertNotNull(rewriterClient, "应能成功派生改写 Agent 的专用客户端");
 
-        // 2. 通过 AgentType 枚举为 Issue 治理 Agent 派生专用 Client 并绑定专属工具
-        ChatClient issueClient = clientFactory.createClient(
-                com.example.springai.pipeline.agent.AgentType.GITHUB_ISSUE_AGENT,
+        // 2. 通过 AgentType 枚举为 日志诊断 Agent 派生专用 Client 并绑定专属工具
+        ChatClient logClient = clientFactory.createClient(
+                com.example.springai.pipeline.agent.AgentType.LOG_DIAGNOSE_AGENT,
                 userAccountTool
         );
-        assertNotNull(issueClient, "应能成功派生带专属工具的客户端");
+        assertNotNull(logClient, "应能成功派生带专属工具的客户端");
 
         // 3. 验证两个客户端是独立实例 (非同一引用)
-        assertNotSame(rewriterClient, issueClient, "不同智能体应具有独立的客户端实例与人设");
+        assertNotSame(rewriterClient, logClient, "不同智能体应具有独立的客户端实例与人设");
     }
 }

@@ -25,16 +25,16 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class MasterAgentRouter {
 
-    private static final Pattern REPO_PATTERN = Pattern.compile("([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)");
-    private static final Pattern PR_NUM_PATTERN = Pattern.compile("(?:#|pr\\s*|PR\\s*)(\\d+)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern ISSUE_NUM_PATTERN = Pattern.compile("(?:issue\\s*|Issue\\s*)(\\d+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SERVICE_PATTERN = Pattern.compile("([a-zA-Z0-9_-]+-(?:service|app|server|api|gateway))", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TRACE_PATTERN = Pattern.compile("(?:trace(?:id)?|tid)[=:\\s]+([a-zA-Z0-9_-]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern STATUS_CODE_PATTERN = Pattern.compile("\\b(500|502|503|504)\\b");
 
     private final AgentPromptRegistry promptRegistry;
 
     /**
      * 根据用户诉求输入规划调度决策计划
      *
-     * @param query 开发者输入的提问/诉求
+     * @param query 工程师输入的排障/咨询诉求
      * @return 结构化的调度计划 (DispatchPlan)
      */
     public DispatchPlan route(String query) {
@@ -45,95 +45,96 @@ public class MasterAgentRouter {
         String text = query.trim();
         Map<String, Object> contextParams = extractContextParams(text);
 
-        log.debug("[MasterRouter] 正在分析调度意图, query: {}, 上下文: {}", text, contextParams);
+        log.debug("[MasterRouter] 正在分析排障意图, query: {}, 上下文: {}", text, contextParams);
 
-        // 1. 复合多意图判定：同时涉及 CI/Actions 构建排障 与 PR 代码审查/合并
-        if (isCiRelated(text) && isPrRelated(text)) {
-            return planCiAndPrComposite(text, contextParams);
+        // 1. 复合多意图判定：同时涉及服务日志异常报错 与 数据库慢查/连接池打满
+        if (isLogRelated(text) && isDbRelated(text)) {
+            return planLogAndDbComposite(text, contextParams);
         }
 
-        // 2. 单意图直通判定 - Issue 缺陷提报与治理
-        if (isIssueRelated(text)) {
+        // 2. 单意图直通判定 - 日志与分布式链路排障
+        if (isLogRelated(text)) {
             return planSingleExpert(
-                    AgentType.GITHUB_ISSUE_AGENT.getCode(),
-                    AgentType.GITHUB_ISSUE_AGENT.getName(),
-                    "检索关联历史 Issue 并装配标准化缺陷提单卡片",
+                    AgentType.LOG_DIAGNOSE_AGENT.getCode(),
+                    AgentType.LOG_DIAGNOSE_AGENT.getName(),
+                    "检索服务异常日志、解析报错堆栈并对比已知故障知识库",
                     contextParams
             );
         }
 
-        // 3. 单意图直通判定 - PR 代码审查与 Diff 比对
-        if (isPrRelated(text)) {
+        // 3. 单意图直通判定 - 数据库性能与慢SQL诊断
+        if (isDbRelated(text)) {
             return planSingleExpert(
-                    AgentType.GITHUB_PR_AGENT.getCode(),
-                    AgentType.GITHUB_PR_AGENT.getName(),
-                    "拉取 PR Diff 代码变更列表，执行安全规范与合并风险审查",
+                    AgentType.DB_DIAGNOSE_AGENT.getCode(),
+                    AgentType.DB_DIAGNOSE_AGENT.getName(),
+                    "诊断数据库慢查询、活跃连接数与长事务锁等待",
                     contextParams
             );
         }
 
-        // 4. 单意图直通判定 - Release 发版与 Changelog
-        if (isReleaseRelated(text)) {
+        // 4. 单意图直通判定 - 应急止血与运维处置
+        if (isSreRelated(text)) {
             return planSingleExpert(
-                    AgentType.GITHUB_RELEASE_AGENT.getCode(),
-                    AgentType.GITHUB_RELEASE_AGENT.getName(),
-                    "抓取版本 Tag 提交记录，自动提炼 Markdown Changelog 并装配发版卡片",
+                    AgentType.SRE_COPILOT_AGENT.getCode(),
+                    AgentType.SRE_COPILOT_AGENT.getName(),
+                    "制定应急止血处置方案，装配确认卡片并引导工程师核验执行",
                     contextParams
             );
         }
 
-        // 5. 单意图直通判定 - GitHub Actions / CI 流水线排障
-        if (isCiRelated(text)) {
+        // 5. 若挂载了通用智能体，直通 GENERAL_AGENT
+        if (isAgentOnline(AgentType.GENERAL_AGENT.getCode())) {
+            log.info("[MasterRouter] 未匹配到特定的专业排障专家, 转入通用智能体协同, query: {}", text);
             return planSingleExpert(
-                    AgentType.GITHUB_WORKFLOW_AGENT.getCode(),
-                    AgentType.GITHUB_WORKFLOW_AGENT.getName(),
-                    "检索 GitHub Actions 工作流运行记录，定位单元测试与构建失败根因",
+                    AgentType.GENERAL_AGENT.getCode(),
+                    AgentType.GENERAL_AGENT.getName(),
+                    "通用技术问答与综合建议",
                     contextParams
             );
         }
 
-        // 6. 无明确业务意图匹配：优雅降级为 FALLBACK
+        // 6. 优雅降级为 FALLBACK
         log.info("[MasterRouter] 未匹配到特定的专业业务专家, 降级处理, query: {}", text);
-        return DispatchPlan.fallback("当前诉求未命中已挂载的特定业务专家，建议使用通用对话或输入 /help 查看指令");
+        return DispatchPlan.fallback("当前诉求未命中已挂载的特定业务专家，建议输入 /help 查看排障与系统指令");
     }
 
     /**
-     * 规划 CI 排障 + PR 审查复合协同计划
+     * 规划 日志异常排查 + 数据库诊断 复合协同计划
      */
-    private DispatchPlan planCiAndPrComposite(String query, Map<String, Object> contextParams) {
-        String workflowCode = AgentType.GITHUB_WORKFLOW_AGENT.getCode();
-        String prCode = AgentType.GITHUB_PR_AGENT.getCode();
+    private DispatchPlan planLogAndDbComposite(String query, Map<String, Object> contextParams) {
+        String logCode = AgentType.LOG_DIAGNOSE_AGENT.getCode();
+        String dbCode = AgentType.DB_DIAGNOSE_AGENT.getCode();
 
         // 校验两个专家是否均在线
-        if (!isAgentOnline(workflowCode)) {
-            return DispatchPlan.fallback("复合任务规划受阻：流水线排障专家 [" + workflowCode + "] 当前处于下线状态");
+        if (!isAgentOnline(logCode)) {
+            return DispatchPlan.fallback("复合任务规划受阻：日志分析专家 [" + logCode + "] 当前处于下线状态");
         }
-        if (!isAgentOnline(prCode)) {
-            return DispatchPlan.fallback("复合任务规划受阻：代码审查专家 [" + prCode + "] 当前处于下线状态");
+        if (!isAgentOnline(dbCode)) {
+            return DispatchPlan.fallback("复合任务规划受阻：数据库诊断专家 [" + dbCode + "] 当前处于下线状态");
         }
 
         List<DispatchStep> steps = new ArrayList<>();
 
-        // Step 1: 先调 Actions 专家提取报错日志
+        // Step 1: 先调 日志专家 提取报错堆栈与根因
         steps.add(DispatchStep.builder()
                 .stepOrder(1)
-                .targetAgent(workflowCode)
-                .targetAgentName(AgentType.GITHUB_WORKFLOW_AGENT.getName())
-                .taskDesc("提取 GitHub Actions 最近一次构建失败日志与异常测试堆栈")
+                .targetAgent(logCode)
+                .targetAgentName(AgentType.LOG_DIAGNOSE_AGENT.getName())
+                .taskDesc("检索目标服务错误日志，提取核心报错堆栈与数据库异常提示")
                 .inputParams(contextParams)
                 .build());
 
-        // Step 2: 再调 PR 专家结合日志比对 Diff
+        // Step 2: 再调 数据库专家 结合日志指标排查慢SQL与连接池
         steps.add(DispatchStep.builder()
                 .stepOrder(2)
-                .targetAgent(prCode)
-                .targetAgentName(AgentType.GITHUB_PR_AGENT.getName())
-                .taskDesc("结合 Step 1 提取的 CI 报错堆栈，审查 PR 代码 Diff 变更并评估修复方案")
+                .targetAgent(dbCode)
+                .targetAgentName(AgentType.DB_DIAGNOSE_AGENT.getName())
+                .taskDesc("结合 Step 1 日志异常，诊断数据库活跃连接水位、慢查询与长事务")
                 .inputParams(contextParams)
                 .build());
 
-        String reason = "检测到复合研发诉求（CI 构建失败 + PR 代码变更）：已编排两步依赖协同，先排查流水线报错，再比对代码审查。";
-        log.info("[MasterRouter] ⚡ 成功生成复合多意图调度计划: 步骤数={}", steps.size());
+        String reason = "检测到复合排障诉求（服务日志异常 + 数据库性能瓶颈）：编排两步依赖协同，先定位日志堆栈，再深入数据库诊断。";
+        log.info("[MasterRouter] ⚡ 成功生成复合多意图排障调度计划: 步骤数={}", steps.size());
         return DispatchPlan.composite(reason, steps);
     }
 
@@ -162,50 +163,49 @@ public class MasterAgentRouter {
     }
 
     /**
-     * 从查询文本中提取仓库名与单号等上下文元数据
+     * 从查询文本中提取服务名、TraceID、错误码等排障上下文
      */
     private Map<String, Object> extractContextParams(String query) {
         Map<String, Object> params = new LinkedHashMap<>();
 
-        Matcher repoMatcher = REPO_PATTERN.matcher(query);
-        if (repoMatcher.find()) {
-            params.put("repo", repoMatcher.group(1));
+        Matcher serviceMatcher = SERVICE_PATTERN.matcher(query);
+        if (serviceMatcher.find()) {
+            params.put("service", serviceMatcher.group(1));
         }
 
-        Matcher prMatcher = PR_NUM_PATTERN.matcher(query);
-        if (prMatcher.find()) {
-            params.put("pr", Integer.parseInt(prMatcher.group(1)));
+        Matcher traceMatcher = TRACE_PATTERN.matcher(query);
+        if (traceMatcher.find()) {
+            params.put("traceId", traceMatcher.group(1));
         }
 
-        Matcher issueMatcher = ISSUE_NUM_PATTERN.matcher(query);
-        if (issueMatcher.find()) {
-            params.put("issue", Integer.parseInt(issueMatcher.group(1)));
+        Matcher statusMatcher = STATUS_CODE_PATTERN.matcher(query);
+        if (statusMatcher.find()) {
+            params.put("statusCode", statusMatcher.group(1));
         }
 
         return Collections.unmodifiableMap(params);
     }
 
-    private boolean isIssueRelated(String text) {
+    private boolean isLogRelated(String text) {
         String lower = text.toLowerCase(Locale.ROOT);
-        return lower.contains("issue") || lower.contains("bug") || lower.contains("缺陷")
-                || lower.contains("提单") || lower.contains("工单") || lower.contains("故障");
+        return lower.contains("log") || lower.contains("日志") || lower.contains("报错")
+                || lower.contains("error") || lower.contains("exception") || lower.contains("堆栈")
+                || lower.contains("trace") || lower.contains("504") || lower.contains("500")
+                || lower.contains("502") || lower.contains("oom") || lower.contains("超时");
     }
 
-    private boolean isPrRelated(String text) {
+    private boolean isDbRelated(String text) {
         String lower = text.toLowerCase(Locale.ROOT);
-        return lower.contains("pr") || lower.contains("pull request") || lower.contains("review")
-                || lower.contains("审查") || lower.contains("diff") || lower.contains("合并");
+        return lower.contains("db") || lower.contains("数据库") || lower.contains("mysql")
+                || lower.contains("慢sql") || lower.contains("慢查询") || lower.contains("连接池")
+                || lower.contains("死锁") || lower.contains("锁等待") || lower.contains("事务")
+                || lower.contains("hikari") || lower.contains("druid");
     }
 
-    private boolean isReleaseRelated(String text) {
+    private boolean isSreRelated(String text) {
         String lower = text.toLowerCase(Locale.ROOT);
-        return lower.contains("release") || lower.contains("changelog") || lower.contains("发版")
-                || lower.contains("发布版本") || lower.contains("tag") || lower.contains("版本日志");
-    }
-
-    private boolean isCiRelated(String text) {
-        String lower = text.toLowerCase(Locale.ROOT);
-        return lower.contains("ci") || lower.contains("actions") || lower.contains("流水线")
-                || lower.contains("构建") || lower.contains("workflow") || lower.contains("测试失败");
+        return lower.contains("止血") || lower.contains("kill") || lower.contains("重启")
+                || lower.contains("扩容") || lower.contains("降级") || lower.contains("熔断")
+                || lower.contains("工单") || lower.contains("处置") || lower.contains("sop");
     }
 }

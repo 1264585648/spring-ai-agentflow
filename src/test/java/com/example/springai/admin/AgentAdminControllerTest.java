@@ -90,8 +90,8 @@ class AgentAdminControllerTest {
     void testUpdateAgentPrompt() {
         AgentDefinitionEntity existing = AgentDefinitionEntity.builder()
                 .id(1L)
-                .agentCode("GITHUB_ISSUE_AGENT")
-                .agentName("Issue 治理与表单装配智能体")
+                .agentCode("LOG_DIAGNOSE_AGENT")
+                .agentName("日志异常分析智能体")
                 .systemPrompt("旧人设")
                 .dispatchDesc("旧描述")
                 .temperature(0.3)
@@ -100,20 +100,20 @@ class AgentAdminControllerTest {
                 .status("ONLINE")
                 .build();
 
-        when(agentRepository.findByAgentCode("GITHUB_ISSUE_AGENT")).thenReturn(Optional.of(existing));
+        when(agentRepository.findByAgentCode("LOG_DIAGNOSE_AGENT")).thenReturn(Optional.of(existing));
         when(agentRepository.save(any(AgentDefinitionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         AgentUpdateRequest req = new AgentUpdateRequest();
-        req.setSystemPrompt("新人设：增加对 GitHub Discussion 缺陷识别与自动打标逻辑。");
+        req.setSystemPrompt("新人设：增加对 OOM 堆内存与线程死锁日志分析逻辑。");
         req.setTemperature(0.15);
 
-        ResponseEntity<?> response = controller.updateAgent("GITHUB_ISSUE_AGENT", req);
+        ResponseEntity<?> response = controller.updateAgent("LOG_DIAGNOSE_AGENT", req);
         assertEquals(200, response.getStatusCode().value());
         AgentResponse resp = (AgentResponse) response.getBody();
         assertNotNull(resp);
         assertEquals(2, resp.getVersion());
         assertEquals(0.15, resp.getTemperature());
-        assertEquals("新人设：增加对 GitHub Discussion 缺陷识别与自动打标逻辑。", resp.getSystemPrompt());
+        assertEquals("新人设：增加对 OOM 堆内存与线程死锁日志分析逻辑。", resp.getSystemPrompt());
 
         verify(eventPublisher, times(1)).publishEvent(any(AgentDefinitionReloadEvent.class));
     }
@@ -151,45 +151,45 @@ class AgentAdminControllerTest {
     @DisplayName("测试下线业务智能体时触发依赖审计：存在 L1 规则硬依赖时阻断下线")
     void testOfflineBlockedByRuleDependency() {
         AgentDefinitionEntity subAgent = AgentDefinitionEntity.builder()
-                .agentCode("GITHUB_PR_AGENT")
+                .agentCode("DB_DIAGNOSE_AGENT")
                 .isSystemCore(0)
                 .status("ONLINE")
                 .build();
 
-        when(agentRepository.findByAgentCode("GITHUB_PR_AGENT")).thenReturn(Optional.of(subAgent));
+        when(agentRepository.findByAgentCode("DB_DIAGNOSE_AGENT")).thenReturn(Optional.of(subAgent));
 
-        // 模拟存在一条正在运行的规则，target_ref 指向 GITHUB_PR_AGENT
+        // 模拟存在一条正在运行的规则，target_ref 指向 DB_DIAGNOSE_AGENT
         RuleDefinitionEntity activeRule = new RuleDefinitionEntity();
-        activeRule.setRuleCode("CMD_AUTO_PR_REVIEW");
+        activeRule.setRuleCode("CMD_AUTO_SLOW_SQL");
         activeRule.setIsEnabled(1);
-        activeRule.setTargetRef("GITHUB_PR_AGENT.reviewDiff");
+        activeRule.setTargetRef("DB_DIAGNOSE_AGENT.checkSlowSql");
         when(ruleRepository.findAll()).thenReturn(List.of(activeRule));
 
         Map<String, String> body = Map.of("status", "DEPRECATED");
-        ResponseEntity<?> response = controller.updateStatus("GITHUB_PR_AGENT", body);
+        ResponseEntity<?> response = controller.updateStatus("DB_DIAGNOSE_AGENT", body);
 
         assertEquals(400, response.getStatusCode().value());
         assertTrue(response.getBody().toString().contains("下线阻断"));
-        assertTrue(response.getBody().toString().contains("CMD_AUTO_PR_REVIEW"));
+        assertTrue(response.getBody().toString().contains("CMD_AUTO_SLOW_SQL"));
     }
 
     @Test
     @DisplayName("测试无依赖的业务智能体顺利流转至 DEPRECATED / OFFLINE 状态")
     void testOfflineSuccessWithoutDependency() {
         AgentDefinitionEntity subAgent = AgentDefinitionEntity.builder()
-                .agentCode("GITHUB_WORKFLOW_AGENT")
+                .agentCode("SRE_COPILOT_AGENT")
                 .isSystemCore(0)
                 .status("ONLINE")
                 .isEnabled(1)
                 .version(1)
                 .build();
 
-        when(agentRepository.findByAgentCode("GITHUB_WORKFLOW_AGENT")).thenReturn(Optional.of(subAgent));
+        when(agentRepository.findByAgentCode("SRE_COPILOT_AGENT")).thenReturn(Optional.of(subAgent));
         when(ruleRepository.findAll()).thenReturn(Collections.emptyList());
         when(agentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         Map<String, String> body = Map.of("status", "OFFLINE");
-        ResponseEntity<?> response = controller.updateStatus("GITHUB_WORKFLOW_AGENT", body);
+        ResponseEntity<?> response = controller.updateStatus("SRE_COPILOT_AGENT", body);
 
         assertEquals(200, response.getStatusCode().value());
         AgentResponse resp = (AgentResponse) response.getBody();

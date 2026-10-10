@@ -22,9 +22,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({ caseId, onClose }) => {
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <Bot size={20} color="#38bdf8" />
         <div>
-          <div style={{ fontSize: '15px', fontWeight: 600 }}>GitHub 研发协同与多智能体助手</div>
+          <div style={{ fontSize: '15px', fontWeight: 600 }}>企业级智能运维与多智能体排障助手</div>
           <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-            协同目标仓库：<span style={{ color: '#38bdf8' }}>{caseId}</span>
+            协同目标服务：<span style={{ color: '#38bdf8' }}>{caseId}</span>
           </div>
         </div>
       </div>

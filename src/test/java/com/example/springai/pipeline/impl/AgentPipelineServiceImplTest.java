@@ -4,16 +4,18 @@ import com.example.springai.api.dto.ChatRequest;
 import com.example.springai.card.model.InteractiveCard;
 import com.example.springai.execution.sse.SseEventPublisher;
 import com.example.springai.pipeline.agent.AgentChatClientFactory;
+import com.example.springai.pipeline.agent.MasterAgentRouter;
+import com.example.springai.pipeline.agent.dto.DispatchPlan;
 import com.example.springai.pipeline.dispatcher.L1ToolDispatcher;
 import com.example.springai.pipeline.intent.IntentMatchResult;
 import com.example.springai.pipeline.intent.L1RuleMatcher;
-import com.example.springai.tool.GitHubApiTool;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -26,7 +28,7 @@ class AgentPipelineServiceImplTest {
     private L1RuleMatcher l1RuleMatcher;
     private L1ToolDispatcher l1ToolDispatcher;
     private AgentChatClientFactory chatClientFactory;
-    private GitHubApiTool gitHubApiTool;
+    private MasterAgentRouter masterAgentRouter;
     private Executor directExecutor;
 
     private AgentPipelineServiceImpl pipelineService;
@@ -44,7 +46,7 @@ class AgentPipelineServiceImplTest {
         l1RuleMatcher = mock(L1RuleMatcher.class);
         l1ToolDispatcher = mock(L1ToolDispatcher.class);
         chatClientFactory = mock(AgentChatClientFactory.class);
-        gitHubApiTool = new GitHubApiTool();
+        masterAgentRouter = mock(MasterAgentRouter.class);
         // 使用同步直接执行器以确保单测可预测完成
         directExecutor = Runnable::run;
 
@@ -53,7 +55,7 @@ class AgentPipelineServiceImplTest {
                 l1RuleMatcher,
                 l1ToolDispatcher,
                 chatClientFactory,
-                gitHubApiTool,
+                masterAgentRouter,
                 directExecutor
         );
     }
@@ -79,29 +81,37 @@ class AgentPipelineServiceImplTest {
     @Test
     @DisplayName("测试命中 L1 命令直通工具调度")
     void testL1ToolDispatchHit() {
-        when(l1RuleMatcher.match("/repo spring-projects/spring-ai")).thenReturn(
-                IntentMatchResult.hitL1("CMD_QUERY_REPO", "仓库速查", "TOOL", "githubApiTool.queryRepo", "{\"repo\": \"spring-projects/spring-ai\"}", null, 2L)
+        when(l1RuleMatcher.match("/query user_id=1001")).thenReturn(
+                IntentMatchResult.hitL1("CMD_QUERY_ACCOUNT", "查账", "TOOL", "userAccountTool.queryBalance", "{\"userId\": \"1001\"}", null, 2L)
         );
-        when(l1ToolDispatcher.dispatch(eq("githubApiTool.queryRepo"), anyString()))
-                .thenReturn("📦 仓库详情: Stars: 4820");
+        when(l1ToolDispatcher.dispatch(eq("userAccountTool.queryBalance"), anyString()))
+                .thenReturn("💰 账户余额: 1000.00");
 
         ChatRequest request = new ChatRequest();
         request.setSessionId("sess_102");
-        request.setQuery("/repo spring-projects/spring-ai");
+        request.setQuery("/query user_id=1001");
         pipelineService.process(request);
 
-        verify(ssePublisher).sendProgress(eq("sess_102"), eq("L1_TOOL"), contains("githubApiTool.queryRepo"));
-        verify(l1ToolDispatcher).dispatch(eq("githubApiTool.queryRepo"), anyString());
+        verify(ssePublisher).sendProgress(eq("sess_102"), eq("L1_TOOL"), contains("userAccountTool.queryBalance"));
+        verify(l1ToolDispatcher).dispatch(eq("userAccountTool.queryBalance"), anyString());
         verify(ssePublisher, atLeastOnce()).sendMessage(eq("sess_102"), anyString());
         verify(ssePublisher).sendDone("sess_102");
     }
 
     @Test
-    @DisplayName("测试未命中 L1 时进入 GitHub 协同流水线并下发 GITHUB_ISSUE_SUBMIT 卡片")
-    void testNonL1EntersGitHubIssuePipelineAndEmitsCard() {
+    @DisplayName("测试未命中 L1 时进入排障协同流水线并下发 TROUBLESHOOT_ACTION 卡片")
+    void testNonL1EntersTroubleshootingPipelineAndEmitsCard() {
         when(l1RuleMatcher.match(anyString())).thenReturn(IntentMatchResult.miss());
 
-        String query = "我们在 spring-projects/spring-ai 仓库发现 Redis 连接池高并发泄漏，请协助建一个 Issue";
+        DispatchPlan mockPlan = DispatchPlan.single(
+                "LOG_DIAGNOSE_AGENT",
+                "日志异常分析智能体",
+                "检索服务异常日志并分析报错根因",
+                Map.of("service", "order-service")
+        );
+        when(masterAgentRouter.route(anyString())).thenReturn(mockPlan);
+
+        String query = "order-service 出现大量 504 错误，请协助排查";
         ChatRequest request = new ChatRequest();
         request.setSessionId("sess_103");
         request.setQuery(query);
@@ -109,10 +119,10 @@ class AgentPipelineServiceImplTest {
         pipelineService.process(request);
 
         // 1. 验证下发思考链
-        verify(ssePublisher).sendThinking(eq("sess_103"), contains("MasterAgent 正在委派 GithubIssueAgent"));
+        verify(ssePublisher).sendThinking(eq("sess_103"), contains("MasterAgent 正在分析排障诉求"));
 
-        // 2. 验证仓库同步进度
-        verify(ssePublisher).sendProgress(eq("sess_103"), eq("GITHUB_SYNC"), contains("spring-projects/spring-ai"));
+        // 2. 验证智能体委派进度
+        verify(ssePublisher).sendProgress(eq("sess_103"), eq("AGENT_DISPATCH"), contains("日志异常分析智能体"));
 
         // 3. 验证文本流式输出
         verify(ssePublisher, atLeastOnce()).sendMessage(eq("sess_103"), anyString());
@@ -122,19 +132,17 @@ class AgentPipelineServiceImplTest {
         verify(ssePublisher).sendInteractiveCard(eq("sess_103"), cardCaptor.capture());
         InteractiveCard card = cardCaptor.getValue();
         assertNotNull(card);
-        assertEquals("GITHUB_ISSUE_SUBMIT", card.getCardType());
-        assertTrue(card.getTitle().contains("GitHub Issue"));
-        assertTrue(card.getFields().stream().anyMatch(f -> "repo".equals(f.getFieldKey()) && "spring-projects/spring-ai".equals(f.getValue())));
-        assertTrue(card.getFields().stream().anyMatch(f -> "issue_type".equals(f.getFieldKey())));
-        assertTrue(card.getFields().stream().anyMatch(f -> "body".equals(f.getFieldKey())));
+        assertEquals("TROUBLESHOOT_ACTION", card.getCardType());
+        assertTrue(card.getTitle().contains("应急止血"));
+        assertTrue(card.getFields().stream().anyMatch(f -> "service".equals(f.getFieldKey()) && "order-service".equals(f.getValue())));
+        assertTrue(card.getFields().stream().anyMatch(f -> "action_type".equals(f.getFieldKey())));
 
         // 5. 验证推荐问题
         ArgumentCaptor<List<String>> questionsCaptor = ArgumentCaptor.forClass(List.class);
         verify(ssePublisher).sendRecommendQuestions(eq("sess_103"), questionsCaptor.capture());
         List<String> questions = questionsCaptor.getValue();
         assertNotNull(questions);
-        assertTrue(questions.stream().anyMatch(q -> q.contains("PR")));
-        assertTrue(questions.stream().anyMatch(q -> q.contains("Release")));
+        assertTrue(questions.stream().anyMatch(q -> q.contains("Trace")));
 
         // 6. 验证结束包
         verify(ssePublisher).sendDone("sess_103");

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldAlert } from 'lucide-react';
+import { Activity } from 'lucide-react';
 
 interface WelcomeGuideProps {
   onSelectPrompt: (prompt: string) => void;
@@ -16,12 +16,12 @@ export const WelcomeGuide: React.FC<WelcomeGuideProps> = ({ onSelectPrompt }) =>
         lineHeight: '1.8',
       }}
     >
-      <ShieldAlert size={36} color="#38bdf8" style={{ margin: '0 auto 10px' }} />
+      <Activity size={36} color="#38bdf8" style={{ margin: '0 auto 10px' }} />
       <div style={{ fontWeight: 600, color: '#334155', fontSize: '14px' }}>
-        GitHub 研发协同多智能体助手已就绪
+        企业级智能运维与多智能体排障助手已就绪
       </div>
       <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>
-        点击下方快捷指令或输入问题直接体验：
+        点击下方快捷指令或输入故障描述直接体验：
       </div>
       <div
         style={{
@@ -73,11 +73,11 @@ export const WelcomeGuide: React.FC<WelcomeGuideProps> = ({ onSelectPrompt }) =>
         >
           <span>📌</span> <strong>/help</strong>{' '}
           <span style={{ color: '#64748b', fontSize: '11px' }}>
-            (L1指令帮助菜单直出)
+            (L1系统指令帮助菜单直出)
           </span>
         </button>
         <button
-          onClick={() => onSelectPrompt('/repo spring-projects/spring-ai')}
+          onClick={() => onSelectPrompt('/504')}
           style={{
             padding: '8px 12px',
             backgroundColor: '#ffffff',
@@ -93,15 +93,15 @@ export const WelcomeGuide: React.FC<WelcomeGuideProps> = ({ onSelectPrompt }) =>
             boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
           }}
         >
-          <span>🔍</span> <strong>/repo spring-projects/spring-ai</strong>{' '}
+          <span>🚨</span> <strong>/504</strong>{' '}
           <span style={{ color: '#64748b', fontSize: '11px' }}>
-            (L1正则提取参数查仓库)
+            (L1网关超时排查SOP极速直出)
           </span>
         </button>
         <button
           onClick={() =>
             onSelectPrompt(
-              '在 spring-projects/spring-ai 仓库下，高并发压测时 Redis 连接池偶发泄漏抛出 RedisConnectionException，如何排查并提报 Issue？'
+              'order-service 线上出现 504 Gateway Timeout 报错，日志提示 Hikari 连接超时，请分析日志并排查数据库慢查'
             )
           }
           style={{
@@ -119,9 +119,9 @@ export const WelcomeGuide: React.FC<WelcomeGuideProps> = ({ onSelectPrompt }) =>
             boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
           }}
         >
-          <span>🐛</span> <strong>Redis 泄漏排查与 Issue 提单协同</strong>{' '}
+          <span>🩺</span> <strong>504 超时与连接池慢查联合排障</strong>{' '}
           <span style={{ color: '#64748b', fontSize: '11px' }}>
-            (专家分析 + 预填卡片)
+            (多智能体协同 + 应急止血卡片)
           </span>
         </button>
       </div>

@@ -64,9 +64,9 @@ class AgentPromptRegistryTest {
         assertTrue(rewriterOpt.get().getSystemPrompt().contains("【数据库版本】"));
 
         // 未被数据库覆写的智能体，依然保留代码默认值
-        Optional<AgentDefinition> prOpt = registry.getAgent(AgentType.GITHUB_PR_AGENT);
-        assertTrue(prOpt.isPresent());
-        assertEquals(0.20, prOpt.get().getTemperature());
+        Optional<AgentDefinition> logOpt = registry.getAgent(AgentType.LOG_DIAGNOSE_AGENT);
+        assertTrue(logOpt.isPresent());
+        assertEquals(0.10, logOpt.get().getTemperature());
     }
 
     @Test
@@ -80,7 +80,7 @@ class AgentPromptRegistryTest {
 
         List<AgentDefinition> businessAgents = registry.getOnlineBusinessAgents();
         // 6 个默认中，QUERY_REWRITER (ANALYSIS) 与 MASTER_AGENT (ORCHESTRATION) 不属于 BUSINESS 层
-        // 剩余 4 个是 BUSINESS 层：GITHUB_ISSUE_AGENT, GITHUB_PR_AGENT, GITHUB_RELEASE_AGENT, GITHUB_WORKFLOW_AGENT
+        // 剩余 4 个是 BUSINESS 层：GENERAL_AGENT, LOG_DIAGNOSE_AGENT, DB_DIAGNOSE_AGENT, SRE_COPILOT_AGENT
         assertEquals(4, businessAgents.size());
         assertTrue(businessAgents.stream().allMatch(a -> "BUSINESS".equalsIgnoreCase(a.getLayer())));
         assertTrue(businessAgents.stream().allMatch(a -> "ONLINE".equalsIgnoreCase(a.getStatus())));
@@ -90,6 +90,10 @@ class AgentPromptRegistryTest {
     @DisplayName("测试当智能体被下线 (OFFLINE) 后，getSystemPrompt 自动返回安全兜底提示词")
     void testOfflineAgentReturnsFallbackPrompt() {
         AgentDefinitionRepository mockRepo = mock(AgentDefinitionRepository.class);
+        when(mockRepo.findAll()).thenReturn(List.of());
+
+        AgentPromptRegistry registry = new AgentPromptRegistry(mockRepo);
+        registry.init();
 
         AgentDefinitionEntity offlineEntity = AgentDefinitionEntity.builder()
                 .agentCode("OFFLINE_BOT")
@@ -101,9 +105,7 @@ class AgentPromptRegistryTest {
                 .build();
 
         when(mockRepo.findAll()).thenReturn(List.of(offlineEntity));
-
-        AgentPromptRegistry registry = new AgentPromptRegistry(mockRepo);
-        registry.init();
+        registry.reloadFromDatabase();
 
         String prompt = registry.getSystemPrompt("OFFLINE_BOT");
         assertFalse(prompt.contains("机密提示词"));
@@ -126,10 +128,10 @@ class AgentPromptRegistryTest {
         assertTrue(initialPrompt.contains("【当前已挂载的可调度业务专家清单（动态热装载）】"));
 
         // 验证 4 个默认在线业务专家均被动态注入
-        assertTrue(initialPrompt.contains("[GITHUB_ISSUE_AGENT]"));
-        assertTrue(initialPrompt.contains("[GITHUB_PR_AGENT]"));
-        assertTrue(initialPrompt.contains("[GITHUB_RELEASE_AGENT]"));
-        assertTrue(initialPrompt.contains("[GITHUB_WORKFLOW_AGENT]"));
+        assertTrue(initialPrompt.contains("[GENERAL_AGENT]"));
+        assertTrue(initialPrompt.contains("[LOG_DIAGNOSE_AGENT]"));
+        assertTrue(initialPrompt.contains("[DB_DIAGNOSE_AGENT]"));
+        assertTrue(initialPrompt.contains("[SRE_COPILOT_AGENT]"));
 
         // 验证非业务层的 QUERY_REWRITER 不会作为业务专家被注入
         assertFalse(initialPrompt.contains("[QUERY_REWRITER]"));
@@ -151,23 +153,23 @@ class AgentPromptRegistryTest {
         assertTrue(updatedPrompt.contains("[SECURITY_SCAN_AGENT]"), "MasterAgent 必须自动纳入新注册的在线专家");
         assertTrue(updatedPrompt.contains("负责检查 pom.xml 与 package.json 依赖中的已知安全漏洞"));
 
-        // 3. 模拟动态下线一个专家 (将 GITHUB_RELEASE_AGENT 标记为 OFFLINE)
-        AgentDefinition offlineRelease = AgentDefinition.builder()
-                .agentCode(AgentType.GITHUB_RELEASE_AGENT.getCode())
-                .agentName(AgentType.GITHUB_RELEASE_AGENT.getName())
+        // 3. 模拟动态下线一个专家 (将 SRE_COPILOT_AGENT 标记为 OFFLINE)
+        AgentDefinition offlineSre = AgentDefinition.builder()
+                .agentCode(AgentType.SRE_COPILOT_AGENT.getCode())
+                .agentName(AgentType.SRE_COPILOT_AGENT.getName())
                 .layer("BUSINESS")
-                .systemPrompt("发版提示词")
-                .dispatchDesc("发版描述")
+                .systemPrompt("止血提示词")
+                .dispatchDesc("止血描述")
                 .status("OFFLINE")
                 .isEnabled(0)
                 .build();
-        registry.registerOrUpdate(offlineRelease);
+        registry.registerOrUpdate(offlineSre);
 
         // 验证 MasterAgent 提示词实时剔除了已下线的专家
         String promptAfterOffline = registry.getSystemPrompt(AgentType.MASTER_AGENT);
-        assertFalse(promptAfterOffline.contains("[GITHUB_RELEASE_AGENT]"), "已下线的专家必须立即从 MasterAgent 调度清单中剔除");
+        assertFalse(promptAfterOffline.contains("[SRE_COPILOT_AGENT]"), "已下线的专家必须立即从 MasterAgent 调度清单中剔除");
         // 但其余在线专家依然存在
-        assertTrue(promptAfterOffline.contains("[GITHUB_ISSUE_AGENT]"));
+        assertTrue(promptAfterOffline.contains("[LOG_DIAGNOSE_AGENT]"));
         assertTrue(promptAfterOffline.contains("[SECURITY_SCAN_AGENT]"));
     }
 }

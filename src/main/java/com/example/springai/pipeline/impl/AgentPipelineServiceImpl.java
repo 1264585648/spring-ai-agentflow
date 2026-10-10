@@ -8,45 +8,45 @@ import com.example.springai.execution.sse.SseEventPublisher;
 import com.example.springai.pipeline.AgentPipelineService;
 import com.example.springai.pipeline.agent.AgentChatClientFactory;
 import com.example.springai.pipeline.agent.AgentType;
+import com.example.springai.pipeline.agent.MasterAgentRouter;
+import com.example.springai.pipeline.agent.dto.DispatchPlan;
+import com.example.springai.pipeline.agent.dto.DispatchStep;
+import com.example.springai.pipeline.agent.dto.PlanType;
 import com.example.springai.pipeline.dispatcher.L1ToolDispatcher;
 import com.example.springai.pipeline.intent.IntentMatchResult;
 import com.example.springai.pipeline.intent.L1RuleMatcher;
-import com.example.springai.tool.GitHubApiTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * GitHub 研发协同多智能体流水线实现 (AgentPipelineServiceImpl)
+ * 企业级智能运维与多智能体排障流水线实现 (AgentPipelineServiceImpl)
  * 职责:
- * 1. 意图分级路由：优先匹配 L1 高频规则直出与命令直通；
- * 2. 多智能体协作：MasterAgent 分发至 GithubIssueAgent 专家并挂载 GitHubApiTool；
- * 3. 研发上下文核验：实时检索目标仓库信息与已知 Issue 查重；
- * 4. Human-in-the-loop：生成标准化 GITHUB_ISSUE_SUBMIT 交互卡片，支持用户微调并提报工单；
- * 5. 全链路可观测：推送思考链、进度节点、打字机流式文本与智能推荐问题。
+ * 1. 意图分级降级：优先匹配 L1 高频规则直出与命令直通；
+ * 2. 多智能体协作编排：MasterAgent 识别日志排查、慢SQL诊断与复合任务，并动态委派业务专家；
+ * 3. Human-in-the-loop：大模型仅提供诊断方案，生成标准化 TROUBLESHOOT_ACTION 交互卡片由工程师核验确认；
+ * 4. 全链路可观测：统一推送思考链 (thinking)、步骤进度 (progress)、打字机流式文本与推荐问题。
  */
 @Service
 @Slf4j
 public class AgentPipelineServiceImpl implements AgentPipelineService {
 
-
     private static final int STREAM_CHUNK_SIZE = 8;
     private static final long L1_CHUNK_DELAY_MS = 12L;
     private static final long DEMO_CHUNK_DELAY_MS = 20L;
-    private static final Pattern REPO_PATTERN = Pattern.compile("([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)");
 
     private final SseEventPublisher ssePublisher;
     private final L1RuleMatcher l1RuleMatcher;
     private final L1ToolDispatcher l1ToolDispatcher;
     private final AgentChatClientFactory chatClientFactory;
-    private final GitHubApiTool gitHubApiTool;
+    private final MasterAgentRouter masterAgentRouter;
     private final Executor pipelineExecutor;
 
     public AgentPipelineServiceImpl(
@@ -54,13 +54,13 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
             L1RuleMatcher l1RuleMatcher,
             L1ToolDispatcher l1ToolDispatcher,
             AgentChatClientFactory chatClientFactory,
-            GitHubApiTool gitHubApiTool,
+            MasterAgentRouter masterAgentRouter,
             @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
         this.ssePublisher = ssePublisher;
         this.l1RuleMatcher = l1RuleMatcher;
         this.l1ToolDispatcher = l1ToolDispatcher;
         this.chatClientFactory = chatClientFactory;
-        this.gitHubApiTool = gitHubApiTool;
+        this.masterAgentRouter = masterAgentRouter;
         this.pipelineExecutor = pipelineExecutor;
     }
 
@@ -105,47 +105,64 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                     }
                 }
 
-                // 2. 未命中 L1，进入 GitHub 协同多智能体流水线 (MasterAgent -> GithubIssueAgent)
-                if (!ssePublisher.sendThinking(sessionId, "未命中 L1 极速指令，MasterAgent 正在委派 GithubIssueAgent 专家并检索关联仓库与已知缺陷...")) {
+                // 2. 未命中 L1，由 MasterAgent 进行调度决策规划 (DispatchPlan)
+                DispatchPlan plan = masterAgentRouter.route(query);
+                log.info("[Pipeline] MasterAgent 路由规划结论: type={}, reason={}", plan.getPlanType(), plan.getReason());
+
+                String thinkingMsg = "未命中 L1 极速指令，MasterAgent 正在分析排障诉求并规划调度链路: " + plan.getReason();
+                if (!ssePublisher.sendThinking(sessionId, thinkingMsg)) {
                     return;
                 }
 
-                String repo = extractRepo(query);
-                log.info("[Pipeline] 识别目标仓库: {}", repo);
+                // 3. 执行专家分发与推理
+                DispatchStep primaryStep = (plan.getSteps() != null && !plan.getSteps().isEmpty())
+                        ? plan.getSteps().get(0)
+                        : null;
+                String targetAgentCode = (primaryStep != null && primaryStep.getTargetAgent() != null)
+                        ? primaryStep.getTargetAgent()
+                        : AgentType.GENERAL_AGENT.getCode();
+                String targetAgentName = (primaryStep != null && primaryStep.getTargetAgentName() != null)
+                        ? primaryStep.getTargetAgentName()
+                        : "通用协同专家";
+                Map<String, Object> contextParams = (primaryStep != null && primaryStep.getInputParams() != null)
+                        ? primaryStep.getInputParams()
+                        : Collections.emptyMap();
 
-                String repoOverview = gitHubApiTool.queryRepo(repo);
-                String openIssues = gitHubApiTool.queryIssues(repo, "OPEN");
-
-                if (!ssePublisher.sendProgress(sessionId, "GITHUB_SYNC", "已完成 " + repo + " 仓库上下文检索与现有 Issue 缺陷查重核验")) {
-                    return;
-                }
-
-                // 3. 结合专用智能体人设与 GitHubApiTool 展开推理
                 String responseText;
-                try {
-                    ChatClient issueClient = chatClientFactory.createClient(AgentType.GITHUB_ISSUE_AGENT, gitHubApiTool);
-                    String prompt = String.format("""
-                            开发者提问: %s
-                            
-                            目标仓库概况:
-                            %s
-                            
-                            当前开启的 Issue 缺陷列表:
-                            %s
-                            
-                            请针对开发者的疑问进行专业解答：
-                            1. 分析可能的原因与排查思路；
-                            2. 说明是否已存在相似 Issue 并避免重复提报；
-                            3. 给出提报规范 Issue 进行跟进的建议。
-                            """, query, repoOverview, openIssues);
 
-                    responseText = issueClient.prompt()
+                if (plan.getPlanType() == PlanType.COMPOSITE) {
+                    if (!ssePublisher.sendProgress(sessionId, "MULTI_AGENT_COLLAB", "启动多智能体复合排障：依次调用日志分析专家与数据库诊断专家...")) {
+                        return;
+                    }
+                } else if (plan.getPlanType() == PlanType.SINGLE) {
+                    if (!ssePublisher.sendProgress(sessionId, "AGENT_DISPATCH", "已委派专家 [" + targetAgentName + "] 深入排障...")) {
+                        return;
+                    }
+                }
+
+                try {
+                    ChatClient agentClient = chatClientFactory.createClient(targetAgentCode);
+                    String prompt = String.format("""
+                            工程师故障描述/提问: %s
+                            
+                            MasterAgent 调度规划建议:
+                            - 调度类型: %s
+                            - 任务说明: %s
+                            - 上下文参数: %s
+                            
+                            请以资深运维/SRE架构师的角度提供专业解答：
+                            1. 核心根因研判与排查思路；
+                            2. 关键排查指标与验证方式；
+                            3. 应急止血与长期优化措施。
+                            """, query, plan.getPlanType(), plan.getReason(), contextParams);
+
+                    responseText = agentClient.prompt()
                             .user(prompt)
                             .call()
                             .content();
                 } catch (Exception ex) {
-                    log.warn("[Pipeline] 大模型底座未配置有效 API-Key 或调用超时 ({})，启动研发协同专家规则引擎降级直出", ex.getMessage());
-                    responseText = buildFallbackExpertReply(query, repo);
+                    log.warn("[Pipeline] 大模型底座未配置有效 API-Key 或调用超时 ({})，启动排障专家规则引擎降级直出", ex.getMessage());
+                    responseText = buildFallbackExpertReply(query, contextParams);
                 }
 
                 // 4. 打字机流式回传分析结论
@@ -153,17 +170,17 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                     return;
                 }
 
-                // 5. 挂载 GitHub Issue 标准化交互卡片 (Human-in-the-loop 确认)
-                InteractiveCard card = buildGitHubIssueCard(request, repo, query);
+                // 5. 挂载标准排障应急处置卡片 (Human-in-the-loop 确认)
+                InteractiveCard card = buildTroubleshootCard(request, contextParams, query);
                 if (!ssePublisher.sendInteractiveCard(sessionId, card)) {
                     return;
                 }
 
                 // 6. 推送智能延伸推荐问题
                 if (!ssePublisher.sendRecommendQuestions(sessionId, List.of(
-                        "如何查看此 Issue 关联的 PR 修复分支？",
-                        "查询 " + repo + " 的最新 Release 版本",
-                        "查看当前 GitHub Actions CI 流水线状态"
+                        "如何提取该异常时间窗口内的全链路分布式 Trace？",
+                        "查询该服务数据库连接池当前的活跃与空闲连接水位",
+                        "导出当前故障初步排障报告并通知告警值班群"
                 ))) {
                     return;
                 }
@@ -202,69 +219,52 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
         return true;
     }
 
-    private String extractRepo(String query) {
-        if (query == null) {
-            return "spring-projects/spring-ai";
-        }
-        Matcher matcher = REPO_PATTERN.matcher(query);
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
-        return "spring-projects/spring-ai";
+    private String buildFallbackExpertReply(String query, Map<String, Object> contextParams) {
+        String service = contextParams != null && contextParams.get("service") != null
+                ? String.valueOf(contextParams.get("service"))
+                : "order-service";
+
+        return "您好！我是智能运维与故障排查专家。\n\n"
+                + "针对您反馈的问题（`" + query + "`），系统已结合知识库与排障经验完成综合研判：\n\n"
+                + "1. **故障根因初判**：服务 `" + service + "` 频繁出现高耗时或 504 Gateway Timeout，通常由**数据库连接池耗尽**或**慢查询全表扫描阻塞 Worker 线程**引起；\n"
+                + "2. **关联排查要点**：建议立即核查 HikariCP / Druid 活跃连接数、当前运行时间超过 3s 的长事务，以及是否有慢 SQL 缺少复合索引；\n"
+                + "3. **应急止血建议**：优先临时扩容数据库连接池最大上限，或终止 (Kill) 持续时间过长的高开销查询，恢复核心业务可用性。\n\n"
+                + "遵循安全规范，系统已为您预填标准化应急止血卡片，请核验下方卡片内容并授权执行：";
     }
 
-    private String buildFallbackExpertReply(String query, String repo) {
-        return "您好！我是 GitHub Issue 治理与研发协同专家。\n\n"
-                + "针对您在 `" + repo + "` 仓库中反馈的问题（" + query + "），已结合仓库上下文完成排查与查重：\n\n"
-                + "1. **缺陷排查**：高并发场景下 Redis 连接池泄漏，通常与连接句柄未在 `finally` 块中释放、或响应式异步流被异常中断未触发归还相关；\n"
-                + "2. **已知缺陷查重**：在当前仓库中检索到相似缺陷 `#1024 [Bug]: Redis 连接池高并发下偶发泄漏问题`；\n"
-                + "3. **处理建议**：为避免污染现有缺陷讨论，建议针对您的独立复现步骤与压测指标新建规范的 Issue，以便 Maintainer 团队进行精准复现与修复。\n\n"
-                + "系统已为您预填标准化 GitHub Issue 提报工单，请核验下方卡片内容：";
-    }
+    private InteractiveCard buildTroubleshootCard(ChatRequest request, Map<String, Object> contextParams, String query) {
+        String service = contextParams != null && contextParams.get("service") != null
+                ? String.valueOf(contextParams.get("service"))
+                : "order-service";
 
-    private InteractiveCard buildGitHubIssueCard(ChatRequest request, String repo, String query) {
         InteractiveCard card = new InteractiveCard();
         card.setActionId("act_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12));
-        card.setCardType("GITHUB_ISSUE_SUBMIT");
-        card.setTitle("GitHub Issue 提报与缺陷确认单");
-        card.setDescription("基于多智能体分析与已知缺陷查重，已自动装配规范 Issue 模板。关键信息已锁定，支持微调复现步骤后一键提报：");
+        card.setCardType("TROUBLESHOOT_ACTION");
+        card.setTitle("智能运维应急止血与处置确认单");
+        card.setDescription("基于多智能体故障研判，已自动生成止血预案。遵循 Human-in-the-loop 安全红线，请核验参数后一键执行：");
 
         card.getFields().add(new CardFormField(
-                "repo", "目标仓库 (Repository)", "text", repo, false, true
+                "service", "目标故障服务", "text", service, false, true
         ));
         card.getFields().add(new CardFormField(
-                "issue_type", "缺陷类型 (Issue Type)", "text", "Bug Report (缺陷报告)", false, true
-        ));
-
-        String titleValue = (query != null && !query.isBlank()) ?
-                "[Bug]: " + (query.length() > 30 ? query.substring(0, 30) + "..." : query) :
-                "[Bug]: Redis 连接池高并发下偶发泄漏问题";
-        card.getFields().add(new CardFormField(
-                "title", "Issue 标题", "text", titleValue, true, true
+                "action_type", "应急处置动作", "text", "Kill阻塞慢查询并临时扩容连接池", false, true
         ));
 
         card.getFields().add(new CardFormField(
-                "labels", "关联标签 (Labels)", "text", "bug, high-priority, redis", true, false
+                "target_sql_id", "慢SQL会话 ID / 指纹", "text", "trx_query_10423", true, true
         ));
 
-        String defaultBody = """
-                ### 现象描述
-                在高并发压测场景下，Redis 连接池句柄未被正确归还，导致连接池耗尽抛出异常。
-
-                ### 复现步骤
-                1. 配置 Redis 连接池最大连接数为 20
-                2. 启动并发请求压测 (QPS > 1500)
-                3. 持续 10 分钟后触发 RedisConnectionException
-
-                ### 预期行为
-                无论业务处理成功与否，连接对象必须在 finally 块中安全归还连接池。
-                """;
         card.getFields().add(new CardFormField(
-                "body", "复现步骤与排查说明", "textarea", defaultBody, true, true
+                "max_pool_size", "临时连接池上限调整", "text", "50", true, false
         ));
 
-        card.setConfirmButtonText("确认并在 GitHub 创建 Issue");
-        card.setCancelButtonText("放弃");
+        String defaultRemark = "针对 " + service + " 504 报警紧急止血，隔离慢查询，保障核心交易链路可用。";
+        card.getFields().add(new CardFormField(
+                "remark", "处置原因与影响评估", "textarea", defaultRemark, true, true
+        ));
+
+        card.setConfirmButtonText("确认执行应急处置");
+        card.setCancelButtonText("取消/仅记录");
         return card;
     }
 }

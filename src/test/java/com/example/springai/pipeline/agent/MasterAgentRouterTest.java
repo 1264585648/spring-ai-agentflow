@@ -22,35 +22,30 @@ class MasterAgentRouterTest {
         mockRegistry = mock(AgentPromptRegistry.class);
         router = new MasterAgentRouter(mockRegistry);
 
-        // 默认模拟 4 个核心业务专家全部在线
-        AgentDefinition issueAgent = AgentDefinition.builder()
-                .agentCode("GITHUB_ISSUE_AGENT")
-                .agentName("Issue 治理与表单装配智能体")
+        // 默认模拟 3 个核心排障业务专家全部在线
+        AgentDefinition logAgent = AgentDefinition.builder()
+                .agentCode("LOG_DIAGNOSE_AGENT")
+                .agentName("日志异常分析智能体")
                 .status("ONLINE").isEnabled(1).layer("BUSINESS").build();
 
-        AgentDefinition prAgent = AgentDefinition.builder()
-                .agentCode("GITHUB_PR_AGENT")
-                .agentName("PR 代码审查智能体")
+        AgentDefinition dbAgent = AgentDefinition.builder()
+                .agentCode("DB_DIAGNOSE_AGENT")
+                .agentName("数据库诊断智能体")
                 .status("ONLINE").isEnabled(1).layer("BUSINESS").build();
 
-        AgentDefinition releaseAgent = AgentDefinition.builder()
-                .agentCode("GITHUB_RELEASE_AGENT")
-                .agentName("Release 版本发布智能体")
-                .status("ONLINE").isEnabled(1).layer("BUSINESS").build();
-
-        AgentDefinition workflowAgent = AgentDefinition.builder()
-                .agentCode("GITHUB_WORKFLOW_AGENT")
-                .agentName("CI/CD 流水线排障智能体")
+        AgentDefinition sreAgent = AgentDefinition.builder()
+                .agentCode("SRE_COPILOT_AGENT")
+                .agentName("应急止血与运维协同智能体")
                 .status("ONLINE").isEnabled(1).layer("BUSINESS").build();
 
         when(mockRegistry.getOnlineBusinessAgents())
-                .thenReturn(List.of(issueAgent, prAgent, releaseAgent, workflowAgent));
+                .thenReturn(List.of(logAgent, dbAgent, sreAgent));
     }
 
     @Test
-    @DisplayName("测试单意图：Issue 缺陷提报与咨询命中 SINGLE 直通计划")
-    void testSingleIntentIssueRouting() {
-        String query = "在 spring-projects/spring-ai 仓库下遇到高并发连接池泄漏，如何排查并提报 Issue 缺陷工单？";
+    @DisplayName("测试单意图：服务报错堆栈排查命中 LOG_DIAGNOSE_AGENT 直通计划")
+    void testSingleIntentLogDiagnoseRouting() {
+        String query = "order-service 最近 10 分钟抛出大量 NullPointerException 异常日志，帮我排查一下堆栈";
 
         DispatchPlan plan = router.route(query);
 
@@ -60,15 +55,28 @@ class MasterAgentRouterTest {
 
         DispatchStep step = plan.getSteps().get(0);
         assertEquals(1, step.getStepOrder());
-        assertEquals("GITHUB_ISSUE_AGENT", step.getTargetAgent());
-        assertEquals("spring-projects/spring-ai", step.getInputParams().get("repo"));
-        assertTrue(step.getTaskDesc().contains("Issue"));
+        assertEquals("LOG_DIAGNOSE_AGENT", step.getTargetAgent());
+        assertEquals("order-service", step.getInputParams().get("service"));
+        assertTrue(step.getTaskDesc().contains("日志"));
     }
 
     @Test
-    @DisplayName("测试单意图：PR 代码审查诉求命中 SINGLE 直通计划并提取 PR 编号")
-    void testSingleIntentPrReviewRouting() {
-        String query = "请审查 spring-projects/spring-ai PR #518 的代码 Diff 与合入安全风险";
+    @DisplayName("测试单意图：数据库慢SQL排查命中 DB_DIAGNOSE_AGENT 直通计划")
+    void testSingleIntentDbDiagnoseRouting() {
+        String query = "payment-service 数据库出现严重死锁与慢查询，连接池打满，排查一下 slow sql";
+
+        DispatchPlan plan = router.route(query);
+
+        assertNotNull(plan);
+        assertEquals(PlanType.SINGLE, plan.getPlanType());
+        assertEquals(1, plan.getSteps().size());
+        assertEquals("DB_DIAGNOSE_AGENT", plan.getSteps().get(0).getTargetAgent());
+    }
+
+    @Test
+    @DisplayName("测试纯单意图数据库诊断：命中 DB_DIAGNOSE_AGENT 直通计划")
+    void testPureDbDiagnoseRouting() {
+        String query = "帮我诊断当前 mysql 数据库活跃连接水位与长事务锁等待情况";
 
         DispatchPlan plan = router.route(query);
 
@@ -77,15 +85,13 @@ class MasterAgentRouterTest {
         assertEquals(1, plan.getSteps().size());
 
         DispatchStep step = plan.getSteps().get(0);
-        assertEquals("GITHUB_PR_AGENT", step.getTargetAgent());
-        assertEquals("spring-projects/spring-ai", step.getInputParams().get("repo"));
-        assertEquals(518, step.getInputParams().get("pr"));
+        assertEquals("DB_DIAGNOSE_AGENT", step.getTargetAgent());
     }
 
     @Test
-    @DisplayName("测试复合多意图：PR 与 CI 流水线失败联合诉求命中 COMPOSITE 编排计划")
-    void testCompositeCiAndPrRouting() {
-        String query = "spring-projects/spring-ai 仓库中 PR #512 构建流水线 CI 测试失败挂了，请排查日志并比对代码审查";
+    @DisplayName("测试复合多意图：504 网关超时与慢查询打满连接池联合诉求命中 COMPOSITE 编排计划")
+    void testCompositeLogAndDbRouting() {
+        String query = "order-service 线上出现 504 Gateway Timeout 报错，日志提示 Hikari 连接超时，请分析日志并排查数据库慢查";
 
         DispatchPlan plan = router.route(query);
 
@@ -93,33 +99,33 @@ class MasterAgentRouterTest {
         assertEquals(PlanType.COMPOSITE, plan.getPlanType());
         assertEquals(2, plan.getSteps().size(), "复合任务必须拆解为 2 步依次执行");
 
-        // 验证 Step 1: CI 排障先执行
+        // 验证 Step 1: 日志专家先执行
         DispatchStep step1 = plan.getSteps().get(0);
         assertEquals(1, step1.getStepOrder());
-        assertEquals("GITHUB_WORKFLOW_AGENT", step1.getTargetAgent());
-        assertEquals("spring-projects/spring-ai", step1.getInputParams().get("repo"));
-        assertEquals(512, step1.getInputParams().get("pr"));
+        assertEquals("LOG_DIAGNOSE_AGENT", step1.getTargetAgent());
+        assertEquals("order-service", step1.getInputParams().get("service"));
+        assertEquals("504", step1.getInputParams().get("statusCode"));
 
-        // 验证 Step 2: PR Review 后执行并依赖 Step 1 日志
+        // 验证 Step 2: 数据库专家后执行
         DispatchStep step2 = plan.getSteps().get(plan.getSteps().size() - 1);
         assertEquals(2, step2.getStepOrder());
-        assertEquals("GITHUB_PR_AGENT", step2.getTargetAgent());
+        assertEquals("DB_DIAGNOSE_AGENT", step2.getTargetAgent());
         assertTrue(step2.getTaskDesc().contains("Step 1"));
 
-        assertTrue(plan.getReason().contains("复合研发诉求"));
+        assertTrue(plan.getReason().contains("复合排障诉求"));
     }
 
     @Test
     @DisplayName("测试专家下线防线：若目标专家已下线，调度器强行拦截并降级为 FALLBACK")
     void testOfflineAgentIsSafelyBlocked() {
-        // 模拟当前只有 IssueAgent 在线，ReleaseAgent 已下线
-        AgentDefinition issueAgent = AgentDefinition.builder()
-                .agentCode("GITHUB_ISSUE_AGENT")
-                .agentName("Issue 治理智能体")
+        // 模拟当前只有日志专家在线，数据库诊断专家已下线
+        AgentDefinition logAgent = AgentDefinition.builder()
+                .agentCode("LOG_DIAGNOSE_AGENT")
+                .agentName("日志异常分析智能体")
                 .status("ONLINE").isEnabled(1).layer("BUSINESS").build();
-        when(mockRegistry.getOnlineBusinessAgents()).thenReturn(List.of(issueAgent));
+        when(mockRegistry.getOnlineBusinessAgents()).thenReturn(List.of(logAgent));
 
-        String query = "帮我生成 spring-projects/spring-ai 仓库最新 Release 版本的 Changelog 并发版";
+        String query = "帮我分析数据库当前慢查询与死锁指标";
         DispatchPlan plan = router.route(query);
 
         assertNotNull(plan);

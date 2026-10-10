@@ -20,7 +20,7 @@ public class AgentDefinition implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 智能体唯一编码 (如 QUERY_REWRITER, GITHUB_ISSUE_AGENT, MASTER_AGENT)
+     * 智能体唯一编码 (如 QUERY_REWRITER, MASTER_AGENT, LOG_DIAGNOSE_AGENT)
      */
     private String agentCode;
 

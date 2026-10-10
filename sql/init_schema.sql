@@ -109,7 +109,7 @@ VALUES
     'PREFIX', 
     '/help', 
     'STATIC_TEXT', 
-    '📌 **GitHub 协同助手快捷指令**：\n- `/repo <owner/repo>`：极速查询仓库状态、Star 与活跃度\n- `/issue <owner/repo>`：直出最新 Issue 缺陷列表\n- `/query user_id=<编号>`：快速查询用户流水与状态\n- `/help`：获取全部支持命令\n- `#ping`：极速测试系统响应与直通链路', 
+    '📌 **智能运维排障助手快捷指令**：\n- `/504`：极速直出 504 网关超时排查 SOP 手册\n- `/query user_id=<编号>`：快速查询账户水位与状态\n- `/help`：获取全部支持命令\n- `#ping`：极速测试系统响应与直通链路', 
     NULL, 
     1, 
     1, 
@@ -128,16 +128,16 @@ VALUES
     '精确匹配 #ping 直通测试'
   ),
   (
-    'CMD_QUERY_REPO', 
-    'GitHub 仓库速查', 
-    'REGEX', 
-    '^/repo\\s+([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$', 
-    'TOOL', 
-    'githubApiTool.queryRepo', 
-    '{"repo": "$1"}', 
+    'CMD_SOP_504', 
+    '504网关超时排查SOP', 
+    'PREFIX', 
+    '/504', 
+    'STATIC_TEXT', 
+    NULL, 
+    NULL, 
     5, 
     1, 
-    '匹配 /repo owner/repo 格式并极速调用 GitHub API 工具'
+    '【504 Gateway Timeout 极速排查 SOP】\n1. 核查上游网关连接池水位（HikariCP/Druid）是否打满；\n2. 检查应用层 GC 停顿耗时（jstat -gcutil）排查 Full GC 阻塞；\n3. 检索数据库慢SQL日志（查询时长 > 3s 的长事务）；\n4. 临时止血：扩容连接池最大上限或切流降级非核心流量。'
   ),
   (
     'CMD_QUERY_ACCOUNT', 
@@ -152,7 +152,7 @@ VALUES
     '匹配 /query user_id=xxx 并正则提取参数注入 Tool 执行'
   );
 
--- 初始化 6 大核心多智能体矩阵定义 (基于 GitHub API 研发协同与开源运维体系)
+-- 初始化 6 大核心多智能体矩阵定义 (企业级智能运维与排障体系)
 INSERT INTO `sys_agent_definition`
   (`agent_code`, `agent_name`, `agent_type`, `layer`, `system_prompt`, `dispatch_desc`, `model_name`, `temperature`, `attached_tools`, `is_system_core`, `status`, `is_enabled`, `version`, `description`)
 VALUES
@@ -161,8 +161,8 @@ VALUES
     '会话分析与查询重写智能体',
     'PIPELINE_CORE',
     'ANALYSIS',
-    '你是一个专业的 GitHub 研发会话分析与查询重写专家 (QueryRewritingAgent)。\n你的职责是：\n1. 结合多轮对话上下文，消除用户输入中的模糊口语代词（如“这个PR为什么挂了”、“看下上次报的那个bug”）；\n2. 提取并补齐关键仓库标识与单号（如 owner/repo、Issue #123、PR #456）；\n3. 将口语化诉求重写为语义清晰、实体完备的独立查询语句；\n4. 若输入已完备，原样输出，严禁添枝加叶或无故编造。\n注意：直接输出重写后的语句，不要包含任何多余的开场白或解释。',
-    '负责多轮研发协同会话指代消除、补齐 owner/repo 仓库名与 Issue/PR 编号，输出规范查询',
+    '你是一个专业的运维会话分析与查询重写专家 (QueryRewritingAgent)。\n你的职责是：\n1. 结合多轮对话上下文，消除用户输入中的模糊口语代词（如“这个服务为什么挂了”、“看下刚才那个慢SQL”）；\n2. 提取并补齐关键服务标识与单号（如 order-service、TraceID、工单号）；\n3. 将口语化诉求重写为语义清晰、实体完备的独立查询语句；\n4. 若输入已完备，原样输出，严禁添枝加叶或无故编造。\n注意：直接输出重写后的语句，不要包含任何多余的开场白或解释。',
+    '负责多轮运维协同会话指代消除、提取关键服务名、TraceID与故障单号，输出规范查询',
     NULL,
     0.10,
     NULL,
@@ -170,15 +170,15 @@ VALUES
     'ONLINE',
     1,
     1,
-    '分析层前置轻量 AgentBase，负责输入标准化与单号补齐'
+    '分析层前置轻量 AgentBase，负责输入标准化与单号实体补齐'
   ),
   (
     'MASTER_AGENT',
-    'GitHub 协同主协调调度智能体',
+    '主协调调度智能体',
     'PIPELINE_CORE',
     'ORCHESTRATION',
-    '你是一个 GitHub 企业级研发协同主调度专家 (MasterAgent)。\n你的职责是：\n1. 综合研判开发者的研发协同诉求，识别涉及的子任务；\n2. 拆解任务依赖路径，自主规划并调用专业子智能体（Issue治理、PR代码审查、Release发版、Actions排障）；\n3. 汇聚各专业智能体的执行结论，向开发者输出结构化、条理清晰的综合研判与下一步操作建议。',
-    '负责 GitHub 研发任务依赖拆解、子专家协同调度与多源分析结果聚合',
+    '你是一个企业级智能运维与故障排查主调度专家 (MasterAgent)。\n你的职责是：\n1. 综合研判工程师的故障排查诉求，识别涉及的子任务（如：日志异常检索、数据库慢查与连接池分析、止血方案制定）；\n2. 拆解任务依赖路径，自主规划并调用专业子智能体（日志专家、数据库专家、SRE协同专家）；\n3. 汇聚各专业智能体的执行结论，向工程师输出结构化、条理清晰的综合研判与下一步操作建议。',
+    '负责复杂任务与故障依赖拆解、子专家协同调度与多源分析结果聚合',
     NULL,
     0.20,
     NULL,
@@ -189,68 +189,68 @@ VALUES
     '协调层主编排 ReActAgent，调度分发与结论聚合'
   ),
   (
-    'GITHUB_ISSUE_AGENT',
-    'Issue 治理与表单装配智能体',
-    'BUSINESS_SUB',
+    'GENERAL_AGENT',
+    '通用对话与协同智能体',
+    'PIPELINE_CORE',
     'BUSINESS',
-    '你是一个 GitHub Issue 治理与缺陷流转专家 (GithubIssueAgent)。\n你的职责是：\n1. 调用 GitHub API 工具检索历史 Issue 与已关闭讨论，分析是否为已知缺陷或重复提报；\n2. 根据错误堆栈自动研判 Issue 严重等级与推荐标签（bug, enhancement, documentation）；\n3. 装配规范标准的 Issue 确认表单（包括只读的 repo、可编辑的 Title、复现步骤、预期行为），引导开发者一键确认提交。',
-    '负责 GitHub Issue 检索关联、Bug 分类标签判定、重复问题排查与提单卡片装配',
+    '你是一个企业级智能协同与技术答疑专家 (GeneralAgent)。\n请针对工程师的技术疑问提供专业、严谨、条理清晰的解答；若遇到特定故障场景，引导工程师使用规范指令或提供服务名进行针对性排查。',
+    '负责通用技术问答、框架功能说明与未命中特定专家时的兜底解答',
     NULL,
-    0.20,
-    '["githubApiTool.queryIssues"]',
-    0,
+    0.70,
+    NULL,
+    1,
     'ONLINE',
     1,
     1,
-    '业务层 ReActAgent，具备 GitHub Issue 检索与表单装配能力'
+    '业务层通用问答 Agent，负责基础技术咨询与兜底'
   ),
   (
-    'GITHUB_PR_AGENT',
-    'Pull Request 代码审查智能体',
+    'LOG_DIAGNOSE_AGENT',
+    '日志异常分析智能体',
     'BUSINESS_SUB',
     'BUSINESS',
-    '你是一个资深的 GitHub Pull Request 审查专家 (GithubPrReviewAgent)。\n你的职责是：\n1. 调用 GitHub API 检查 PR 的代码 Diff、变更文件列表与合并基础分支；\n2. 严格核查代码规范、潜在 NullPointer/内存泄漏、并发风险与敏感信息（AK/SK泄露）；\n3. 提供建设性改进代码片段，并评估该 PR 是否满足合并质量门禁标准。',
-    '负责 GitHub Pull Request 代码差异比对、安全与规范审查、合并冲突与风险评估',
-    NULL,
-    0.20,
-    '["githubApiTool.queryPullRequest"]',
-    0,
-    'ONLINE',
-    1,
-    1,
-    '业务层 ReActAgent，负责 PR Diff 代码审查与合入风控'
-  ),
-  (
-    'GITHUB_RELEASE_AGENT',
-    'Release 版本发布与 Changelog 智能体',
-    'BUSINESS_SUB',
-    'BUSINESS',
-    '你是一个开源软件工程发版与发布管理专家 (GithubReleaseAgent)。\n你的职责是：\n1. 抓取相邻 Release Tag 之间的 Commit 提交与已合并的 PR 记录；\n2. 自动按照 Features、Bug Fixes、Breaking Changes 分类整理生成规范标准的 Markdown Changelog；\n3. 装配发布版本确认卡片，包含 Tag 名称、发布标题、二进制附件与变更说明供 Release 负责人审核发布。',
-    '负责版本发布、Git Tag 比对、自动提取 Changelog 与发版确认卡片装配',
-    NULL,
-    0.30,
-    '["githubApiTool.queryLatestRelease"]',
-    0,
-    'ONLINE',
-    1,
-    1,
-    '业务层 ReActAgent，负责版本 Changelog 提取与发版卡片装配'
-  ),
-  (
-    'GITHUB_WORKFLOW_AGENT',
-    'CI/CD 流水线与排障智能体',
-    'BUSINESS_SUB',
-    'BUSINESS',
-    '你是一个 GitHub Actions 与 DevOps 持续集成排障专家 (GithubWorkflowAgent)。\n你的职责是：\n1. 调用工具检索 GitHub Actions 工作流运行记录与失败 Job 日志；\n2. 精确定位 CI/CD 报错根因（如依赖安装超时、单元测试断言失败、环境变量缺失、Docker构建错误）；\n3. 翻译报错堆栈为明确的修复操作指引，并协助触发重试或生成故障修复分支。',
-    '排查 GitHub Actions 工作流构建失败、解析测试报错日志并给出修复步骤',
+    '你是一个资深的微服务日志与分布式链路诊断专家 (LogDiagnoseAgent)。\n你的职责是：\n1. 检索目标服务指定时间段内的 Error/Warn 日志，提取核心报错堆栈与异常根因（如 NPE, Timeout, OOM, 连接超时）；\n2. 结合 TraceID 进行全链路拓扑追踪，定位最深层报错源头服务；\n3. 对比历史故障知识库，输出清晰的报错原因与代码层修复排查建议。',
+    '负责微服务日志检索、异常堆栈解析、Trace 分布式链路追踪与已知报错排查',
     NULL,
     0.10,
-    '["githubApiTool.queryWorkflowRuns"]',
+    '[]',
     0,
     'ONLINE',
     1,
     1,
-    '业务层 ReActAgent，排查 GitHub Actions 工作流与构建故障'
+    '业务层 ReActAgent，负责微服务异常日志与全链路 Trace 诊断'
+  ),
+  (
+    'DB_DIAGNOSE_AGENT',
+    '数据库诊断智能体',
+    'BUSINESS_SUB',
+    'BUSINESS',
+    '你是一个企业级数据库与高并发性能调优专家 (DbDiagnoseAgent)。\n你的职责是：\n1. 诊断数据库慢查询日志，提取长耗时 SQL 语句并分析缺少索引、大表全表扫描等性能瓶颈；\n2. 监测当前活跃连接、长事务占用与锁等待情况，排查死锁与连接池打满问题；\n3. 输出 Explain 执行计划分析结论与安全的索引调优建议。',
+    '负责数据库慢SQL检索、死锁与长事务分析、连接池水位诊断与性能调优建议',
+    NULL,
+    0.10,
+    '[]',
+    0,
+    'ONLINE',
+    1,
+    1,
+    '业务层 ReActAgent，负责慢查询、死锁与数据库性能水位诊断'
+  ),
+  (
+    'SRE_COPILOT_AGENT',
+    '应急止血与运维协同智能体',
+    'BUSINESS_SUB',
+    'BUSINESS',
+    '你是一个 SRE 网站可靠性与应急处置专家 (SreCopilotAgent)。\n你的职责是：\n1. 汇聚日志与数据库的诊断结论，评估系统当前受影响程度与故障级别；\n2. 制定高可行的应急止血方案（如临时调大连接池、Kill 阻塞慢查、流量熔断降级或服务滚动重启）；\n3. 遵循 Human-in-the-loop 安全红线，严禁直接自动执行高危写操作，必须装配标准化应急处置卡片交由工程师二次核验后一键执行。',
+    '负责故障综合研判、制定应急止血处置方案、装配确认卡片并引导工程师核验执行',
+    NULL,
+    0.20,
+    '[]',
+    0,
+    'ONLINE',
+    1,
+    1,
+    '业务层 ReActAgent，负责应急方案拟定与卡片装配'
   );
 
 SET FOREIGN_KEY_CHECKS = 1;

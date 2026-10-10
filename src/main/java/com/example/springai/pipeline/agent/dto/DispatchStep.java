@@ -23,7 +23,7 @@ public class DispatchStep {
     private int stepOrder;
 
     /**
-     * 目标业务子智能体唯一编码 (如 GITHUB_WORKFLOW_AGENT, GITHUB_PR_AGENT)
+     * 目标业务子智能体唯一编码 (如 LOG_DIAGNOSE_AGENT, DB_DIAGNOSE_AGENT)
      */
     private String targetAgent;
 
