@@ -1,13 +1,15 @@
 package com.example.springai.card.spi;
 
-import lombok.extern.slf4j.Slf4j;
 import com.example.springai.card.dto.CardSubmitRequest;
 import com.example.springai.card.dto.CardSubmitResult;
+import com.example.springai.troubleshoot.dto.TroubleshootActionParam;
+import com.example.springai.troubleshoot.dto.TroubleshootActionResult;
+import com.example.springai.troubleshoot.port.TroubleshootActionPort;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.Map;
 
 /**
@@ -15,7 +17,7 @@ import java.util.Map;
  * 职责:
  * 1. 响应 TROUBLESHOOT_ACTION 等卡片提交事件 (Human-in-the-loop)；
  * 2. 校验目标服务名与应急处置参数；
- * 3. 模拟调用运维网关下发止血指令（如 Kill 慢会话、扩容连接池），生成应急工单号；
+ * 3. 通过 TroubleshootActionPort 标准端口下发止血指令（如 Kill 慢会话、扩容连接池），生成应急工单号；
  * 4. 优先级高于通用兜底处理器 (@Order(10))。
  */
 @Component
@@ -24,6 +26,16 @@ import java.util.Map;
 public class TroubleshootCardSubmitHandler implements CardSubmitHandler {
 
     public static final String CARD_TYPE_TROUBLESHOOT = "TROUBLESHOOT_ACTION";
+
+    private final TroubleshootActionPort troubleshootActionPort;
+
+    public TroubleshootCardSubmitHandler(TroubleshootActionPort troubleshootActionPort) {
+        this.troubleshootActionPort = troubleshootActionPort;
+    }
+
+    public TroubleshootCardSubmitHandler() {
+        this(new com.example.springai.troubleshoot.mock.MockActionAdapter());
+    }
 
     @Override
     public boolean supports(String cardType) {
@@ -38,25 +50,37 @@ public class TroubleshootCardSubmitHandler implements CardSubmitHandler {
 
         String service = "order-service";
         String actionType = "Kill阻塞慢查询并临时扩容连接池";
+        String targetIdentifier = "trx_10423";
 
         if (formValues != null) {
             if (formValues.get("service") != null && !String.valueOf(formValues.get("service")).isBlank()) {
                 service = String.valueOf(formValues.get("service")).trim();
             }
-            if (formValues.get("action_type") != null) {
+            if (formValues.get("action_type") != null && !String.valueOf(formValues.get("action_type")).isBlank()) {
                 actionType = String.valueOf(formValues.get("action_type")).trim();
+            }
+            if (formValues.get("target_identifier") != null && !String.valueOf(formValues.get("target_identifier")).isBlank()) {
+                targetIdentifier = String.valueOf(formValues.get("target_identifier")).trim();
             }
         }
 
-        // 模拟生成规范运维止血工单号 (例如 OPS-20261009-8421)
-        String dateStr = new SimpleDateFormat("yyyyMMdd").format(new Date());
-        long randomNum = 1000 + (long) (Math.random() * 9000);
-        String ticketId = "OPS-" + dateStr + "-" + randomNum;
+        String operator = "SRE-Oncall";
+        if (formValues != null && formValues.get("operator") != null && !String.valueOf(formValues.get("operator")).isBlank()) {
+            operator = String.valueOf(formValues.get("operator")).trim();
+        }
 
-        String successMessage = String.format("应急止血指令已成功下发至网关！工单号: %s，目标服务: %s，执行动作: %s。",
-                ticketId, service, actionType);
-        log.info("[CardSPI:SRE] 处置成功: 单号: {}, 服务: {}, 动作: {}", ticketId, service, actionType);
+        TroubleshootActionParam param = TroubleshootActionParam.builder()
+                .service(service)
+                .actionType(actionType)
+                .targetIdentifier(targetIdentifier)
+                .reason("前端交互卡片人工核验确认 (actionId: " + request.getActionId() + ")")
+                .operator(operator)
+                .build();
 
-        return CardSubmitResult.ok(ticketId, successMessage);
+        TroubleshootActionResult result = troubleshootActionPort.executeAction(param);
+        log.info("[CardSPI:SRE] 处置成功: 单号: {}, 服务: {}, 动作: {}",
+                result.getTicketId(), service, actionType);
+
+        return CardSubmitResult.ok(result.getTicketId(), result.getAuditMessage());
     }
 }

@@ -2,6 +2,7 @@ package com.example.springai.card.spi;
 
 import com.example.springai.card.dto.CardSubmitRequest;
 import com.example.springai.card.dto.CardSubmitResult;
+import com.example.springai.troubleshoot.mock.MockActionAdapter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -11,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TroubleshootCardSubmitHandlerTest {
 
-    private final TroubleshootCardSubmitHandler handler = new TroubleshootCardSubmitHandler();
+    private final TroubleshootCardSubmitHandler handler = new TroubleshootCardSubmitHandler(new MockActionAdapter());
 
     @Test
     @DisplayName("测试 supports 支持 TROUBLESHOOT_ACTION 卡片类型")
@@ -30,7 +31,8 @@ class TroubleshootCardSubmitHandlerTest {
         request.setCardType("TROUBLESHOOT_ACTION");
         request.setFormValues(Map.of(
                 "service", "order-service",
-                "action_type", "Kill阻塞慢查询并临时扩容连接池"
+                "action_type", "Kill阻塞慢查询并临时扩容连接池",
+                "target_identifier", "trx_10423"
         ));
 
         CardSubmitResult result = handler.handleSubmit(request);

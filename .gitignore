@@ -46,3 +46,9 @@ frontend/.env.local
 application-local.yml
 .env
 .env.*
+
+# 智能运维私有对接与生产凭据隔离 (文档 08 规范)
+**/troubleshoot/internal/**
+**/application-company.yml
+**/application-prod.yml
+**/company-credentials.json

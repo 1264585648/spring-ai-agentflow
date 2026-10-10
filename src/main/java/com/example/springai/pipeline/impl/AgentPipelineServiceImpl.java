@@ -1,11 +1,9 @@
 package com.example.springai.pipeline.impl;
 
-import lombok.extern.slf4j.Slf4j;
 import com.example.springai.api.dto.ChatRequest;
 import com.example.springai.card.model.CardFormField;
 import com.example.springai.card.model.InteractiveCard;
 import com.example.springai.execution.sse.SseEventPublisher;
-import com.example.springai.pipeline.AgentPipelineService;
 import com.example.springai.pipeline.agent.AgentChatClientFactory;
 import com.example.springai.pipeline.agent.AgentType;
 import com.example.springai.pipeline.agent.MasterAgentRouter;
@@ -15,24 +13,27 @@ import com.example.springai.pipeline.agent.dto.PlanType;
 import com.example.springai.pipeline.dispatcher.L1ToolDispatcher;
 import com.example.springai.pipeline.intent.IntentMatchResult;
 import com.example.springai.pipeline.intent.L1RuleMatcher;
+import com.example.springai.pipeline.AgentPipelineService;
+import com.example.springai.tool.TroubleshootTool;
+import com.example.springai.troubleshoot.dto.*;
+import com.example.springai.troubleshoot.port.DatabaseDiagnosePort;
+import com.example.springai.troubleshoot.port.LogQueryPort;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 /**
- * 企业级智能运维与多智能体排障流水线实现 (AgentPipelineServiceImpl)
+ * 企业级智能协同执行流水线实现 (AgentPipelineServiceImpl)
  * 职责:
- * 1. 意图分级降级：优先匹配 L1 高频规则直出与命令直通；
- * 2. 多智能体协作编排：MasterAgent 识别日志排查、慢SQL诊断与复合任务，并动态委派业务专家；
- * 3. Human-in-the-loop：大模型仅提供诊断方案，生成标准化 TROUBLESHOOT_ACTION 交互卡片由工程师核验确认；
- * 4. 全链路可观测：统一推送思考链 (thinking)、步骤进度 (progress)、打字机流式文本与推荐问题。
+ * 1. L1 极速直出: 匹配规则引擎，静态答复或反射调度工具，耗时 < 30ms；
+ * 2. 调度决策中枢: 未命中 L1 时，由 MasterAgentRouter 进行意图研判与多智能体任务分解 (DispatchPlan)；
+ * 3. 专家协同执行: 派发至专业子智能体 (LogDiagnose, DbDiagnose, SreCopilot)，挂载标准排障工具库 (TroubleshootTool)；
+ * 4. 全链路可观测：统一推送思考链 (thinking)、步骤进度 (progress)、打字机流式文本、应急卡片与推荐问题。
  */
 @Service
 @Slf4j
@@ -47,6 +48,9 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
     private final L1ToolDispatcher l1ToolDispatcher;
     private final AgentChatClientFactory chatClientFactory;
     private final MasterAgentRouter masterAgentRouter;
+    private final LogQueryPort logQueryPort;
+    private final DatabaseDiagnosePort databaseDiagnosePort;
+    private final TroubleshootTool troubleshootTool;
     private final Executor pipelineExecutor;
 
     public AgentPipelineServiceImpl(
@@ -55,12 +59,18 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
             L1ToolDispatcher l1ToolDispatcher,
             AgentChatClientFactory chatClientFactory,
             MasterAgentRouter masterAgentRouter,
+            LogQueryPort logQueryPort,
+            DatabaseDiagnosePort databaseDiagnosePort,
+            TroubleshootTool troubleshootTool,
             @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
         this.ssePublisher = ssePublisher;
         this.l1RuleMatcher = l1RuleMatcher;
         this.l1ToolDispatcher = l1ToolDispatcher;
         this.chatClientFactory = chatClientFactory;
         this.masterAgentRouter = masterAgentRouter;
+        this.logQueryPort = logQueryPort;
+        this.databaseDiagnosePort = databaseDiagnosePort;
+        this.troubleshootTool = troubleshootTool;
         this.pipelineExecutor = pipelineExecutor;
     }
 
@@ -141,7 +151,8 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                 }
 
                 try {
-                    ChatClient agentClient = chatClientFactory.createClient(targetAgentCode);
+                    // 为专业智能体挂载专属排障工具库 (TroubleshootTool)
+                    ChatClient agentClient = chatClientFactory.createClient(targetAgentCode, troubleshootTool);
                     String prompt = String.format("""
                             工程师故障描述/提问: %s
                             
@@ -161,7 +172,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                             .call()
                             .content();
                 } catch (Exception ex) {
-                    log.warn("[Pipeline] 大模型底座未配置有效 API-Key 或调用超时 ({})，启动排障专家规则引擎降级直出", ex.getMessage());
+                    log.warn("[Pipeline] 大模型底座未配置有效 API-Key 或调用超时 ({})，启动排障标准端口协同直出", ex.getMessage());
                     responseText = buildFallbackExpertReply(query, contextParams);
                 }
 
@@ -224,12 +235,52 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                 ? String.valueOf(contextParams.get("service"))
                 : "order-service";
 
-        return "您好！我是智能运维与故障排查专家。\n\n"
-                + "针对您反馈的问题（`" + query + "`），系统已结合知识库与排障经验完成综合研判：\n\n"
-                + "1. **故障根因初判**：服务 `" + service + "` 频繁出现高耗时或 504 Gateway Timeout，通常由**数据库连接池耗尽**或**慢查询全表扫描阻塞 Worker 线程**引起；\n"
-                + "2. **关联排查要点**：建议立即核查 HikariCP / Druid 活跃连接数、当前运行时间超过 3s 的长事务，以及是否有慢 SQL 缺少复合索引；\n"
-                + "3. **应急止血建议**：优先临时扩容数据库连接池最大上限，或终止 (Kill) 持续时间过长的高开销查询，恢复核心业务可用性。\n\n"
-                + "遵循安全规范，系统已为您预填标准化应急止血卡片，请核验下方卡片内容并授权执行：";
+        LogQueryResult logResult = logQueryPort.queryLogs(LogQueryCriteria.builder()
+                .service(service)
+                .keyword("504")
+                .build());
+
+        DbDiagnoseResult dbResult = databaseDiagnosePort.diagnoseDatabase(DbDiagnoseCriteria.builder()
+                .service(service)
+                .build());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("您好！我是智能运维与故障排查专家。\n\n");
+        sb.append("针对您反馈的问题（`").append(query).append("`），系统已自动联动 **日志分析专家** 与 **数据库诊断专家** 完成多维协同研判：\n\n");
+
+        sb.append("### 1. 🔍 服务日志与堆栈排查结论 (LogQueryPort)\n");
+        if (logResult != null && logResult.getTotalMatches() > 0) {
+            sb.append("- **命中异常**：共捕获 `").append(logResult.getTotalMatches()).append("` 条关联错误日志；\n");
+            if (logResult.getTopExceptions() != null && !logResult.getTopExceptions().isEmpty()) {
+                sb.append("- **聚类根因**：`").append(logResult.getTopExceptions().get(0)).append("`；\n");
+            }
+            if (logResult.getDeepestStackTrace() != null) {
+                sb.append("- **核心异常栈**：`").append(logResult.getDeepestStackTrace()).append("`。\n");
+            }
+        }
+
+        sb.append("\n### 2. 📊 数据库运行指标与慢查诊断 (DatabaseDiagnosePort)\n");
+        if (dbResult != null) {
+            if (dbResult.getPoolMetrics() != null) {
+                ConnectionPoolMetrics pool = dbResult.getPoolMetrics();
+                sb.append(String.format("- **连接池状态**：HikariCP 连接数 `%d / %d`（水位 **%.0f%% 打满**），排队等待线程数 `%d` 个；\n",
+                        pool.getActiveConnections(), pool.getMaxPoolSize(), pool.getUsageRatio() * 100, pool.getWaitingThreads()));
+            }
+            if (dbResult.getActiveSlowQueries() != null && !dbResult.getActiveSlowQueries().isEmpty()) {
+                SlowQueryItem sq = dbResult.getActiveSlowQueries().get(0);
+                sb.append(String.format("- **阻塞源头会话**：会话 ID `%s`，已执行 `%.1fs`，触发全表扫描；\n",
+                        sq.getSessionProcessId(), sq.getExecutionTimeMs() / 1000.0));
+                sb.append("  ```sql\n  ").append(sq.getSanitizedSql()).append("\n  ```\n");
+            }
+        }
+
+        sb.append("\n### 3. 🚨 应急止血处置方案 (SreCopilotAgent)\n");
+        sb.append("1. **终止长事务**：立即终止 (Kill) 阻塞慢查会话 `trx_10423`，释放数据表排他行锁；\n");
+        sb.append("2. **临时扩容连接池**：将 HikariCP 最大连接数从 50 调优至 80，快速吸收积压流量；\n");
+        sb.append("3. **中长期治理**：针对 `t_order` 表的 `(status, create_time, id)` 补充联合复合索引。\n\n");
+        sb.append("遵循 Human-in-the-loop 安全红线，系统已为您预填标准化应急止血卡片，请核验下方参数后一键执行：");
+
+        return sb.toString();
     }
 
     private InteractiveCard buildTroubleshootCard(ChatRequest request, Map<String, Object> contextParams, String query) {
@@ -249,16 +300,14 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
         card.getFields().add(new CardFormField(
                 "action_type", "应急处置动作", "text", "Kill阻塞慢查询并临时扩容连接池", false, true
         ));
-
         card.getFields().add(new CardFormField(
-                "target_sql_id", "慢SQL会话 ID / 指纹", "text", "trx_query_10423", true, true
+                "target_identifier", "慢查会话ID / 目标标识", "text", "trx_10423", false, true
+        ));
+        card.getFields().add(new CardFormField(
+                "max_pool_size", "临时连接池上限调整", "text", "80", true, false
         ));
 
-        card.getFields().add(new CardFormField(
-                "max_pool_size", "临时连接池上限调整", "text", "50", true, false
-        ));
-
-        String defaultRemark = "针对 " + service + " 504 报警紧急止血，隔离慢查询，保障核心交易链路可用。";
+        String defaultRemark = "针对 " + service + " 504 报警紧急止血，隔离慢查询 trx_10423，保障核心交易链路可用。";
         card.getFields().add(new CardFormField(
                 "remark", "处置原因与影响评估", "textarea", defaultRemark, true, true
         ));

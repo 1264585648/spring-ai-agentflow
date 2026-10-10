@@ -9,6 +9,12 @@ import com.example.springai.pipeline.agent.dto.DispatchPlan;
 import com.example.springai.pipeline.dispatcher.L1ToolDispatcher;
 import com.example.springai.pipeline.intent.IntentMatchResult;
 import com.example.springai.pipeline.intent.L1RuleMatcher;
+import com.example.springai.tool.TroubleshootTool;
+import com.example.springai.troubleshoot.mock.MockActionAdapter;
+import com.example.springai.troubleshoot.mock.MockDbAdapter;
+import com.example.springai.troubleshoot.mock.MockLogAdapter;
+import com.example.springai.troubleshoot.port.DatabaseDiagnosePort;
+import com.example.springai.troubleshoot.port.LogQueryPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -29,6 +35,9 @@ class AgentPipelineServiceImplTest {
     private L1ToolDispatcher l1ToolDispatcher;
     private AgentChatClientFactory chatClientFactory;
     private MasterAgentRouter masterAgentRouter;
+    private LogQueryPort logQueryPort;
+    private DatabaseDiagnosePort databaseDiagnosePort;
+    private TroubleshootTool troubleshootTool;
     private Executor directExecutor;
 
     private AgentPipelineServiceImpl pipelineService;
@@ -47,6 +56,11 @@ class AgentPipelineServiceImplTest {
         l1ToolDispatcher = mock(L1ToolDispatcher.class);
         chatClientFactory = mock(AgentChatClientFactory.class);
         masterAgentRouter = mock(MasterAgentRouter.class);
+
+        logQueryPort = new MockLogAdapter();
+        databaseDiagnosePort = new MockDbAdapter();
+        troubleshootTool = new TroubleshootTool(logQueryPort, databaseDiagnosePort, new MockActionAdapter());
+
         // 使用同步直接执行器以确保单测可预测完成
         directExecutor = Runnable::run;
 
@@ -56,6 +70,9 @@ class AgentPipelineServiceImplTest {
                 l1ToolDispatcher,
                 chatClientFactory,
                 masterAgentRouter,
+                logQueryPort,
+                databaseDiagnosePort,
+                troubleshootTool,
                 directExecutor
         );
     }
@@ -75,7 +92,7 @@ class AgentPipelineServiceImplTest {
         verify(ssePublisher).sendProgress(eq("sess_101"), eq("L1_HIT"), anyString());
         verify(ssePublisher, atLeastOnce()).sendMessage(eq("sess_101"), anyString());
         verify(ssePublisher).sendDone("sess_101");
-        verify(chatClientFactory, never()).createClient(anyString());
+        verify(chatClientFactory, never()).createClient(anyString(), any());
     }
 
     @Test
@@ -124,8 +141,12 @@ class AgentPipelineServiceImplTest {
         // 2. 验证智能体委派进度
         verify(ssePublisher).sendProgress(eq("sess_103"), eq("AGENT_DISPATCH"), contains("日志异常分析智能体"));
 
-        // 3. 验证文本流式输出
-        verify(ssePublisher, atLeastOnce()).sendMessage(eq("sess_103"), anyString());
+        // 3. 验证文本流式输出 (包含降级时从 MockLogAdapter / MockDbAdapter 提取的排障结论)
+        ArgumentCaptor<String> messageCaptor = ArgumentCaptor.forClass(String.class);
+        verify(ssePublisher, atLeastOnce()).sendMessage(eq("sess_103"), messageCaptor.capture());
+        String fullResponse = String.join("", messageCaptor.getAllValues());
+        System.out.println("【DEBUG fullResponse】: " + fullResponse);
+        assertTrue(fullResponse.contains("排障") || fullResponse.contains("order-service"));
 
         // 4. 验证交互卡片挂载
         ArgumentCaptor<InteractiveCard> cardCaptor = ArgumentCaptor.forClass(InteractiveCard.class);
@@ -136,6 +157,7 @@ class AgentPipelineServiceImplTest {
         assertTrue(card.getTitle().contains("应急止血"));
         assertTrue(card.getFields().stream().anyMatch(f -> "service".equals(f.getFieldKey()) && "order-service".equals(f.getValue())));
         assertTrue(card.getFields().stream().anyMatch(f -> "action_type".equals(f.getFieldKey())));
+        assertTrue(card.getFields().stream().anyMatch(f -> "target_identifier".equals(f.getFieldKey())));
 
         // 5. 验证推荐问题
         ArgumentCaptor<List<String>> questionsCaptor = ArgumentCaptor.forClass(List.class);
