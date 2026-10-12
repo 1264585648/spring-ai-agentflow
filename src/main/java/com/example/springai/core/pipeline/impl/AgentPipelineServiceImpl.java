@@ -45,10 +45,11 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
     private final L1ToolDispatcher l1ToolDispatcher;
     private final List<SubAgent> subAgents;
     private final GeneralChatAgent defaultGeneralAgent;
+    private final com.example.springai.core.card.CardRegistry cardRegistry;
     private final Executor pipelineExecutor;
 
     /**
-     * 主构造器：基于 Spring 标准责任链模式自动注入所有 IntentResolver 实现
+     * 主构造器：基于 Spring 标准责任链与 CardRegistry 注入
      */
     @org.springframework.beans.factory.annotation.Autowired
     public AgentPipelineServiceImpl(
@@ -57,13 +58,28 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
             L1ToolDispatcher l1ToolDispatcher,
             List<SubAgent> subAgents,
             GeneralChatAgent defaultGeneralAgent,
+            com.example.springai.core.card.CardRegistry cardRegistry,
             @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
         this.ssePublisher = ssePublisher;
         this.intentResolvers = intentResolvers != null ? intentResolvers : Collections.emptyList();
         this.l1ToolDispatcher = l1ToolDispatcher;
         this.subAgents = subAgents != null ? subAgents : Collections.emptyList();
         this.defaultGeneralAgent = defaultGeneralAgent;
+        this.cardRegistry = cardRegistry;
         this.pipelineExecutor = pipelineExecutor;
+    }
+
+    /**
+     * 兼容性构造器：不传递 CardRegistry
+     */
+    public AgentPipelineServiceImpl(
+            SseEventPublisher ssePublisher,
+            List<IntentResolver> intentResolvers,
+            L1ToolDispatcher l1ToolDispatcher,
+            List<SubAgent> subAgents,
+            GeneralChatAgent defaultGeneralAgent,
+            @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
+        this(ssePublisher, intentResolvers, l1ToolDispatcher, subAgents, defaultGeneralAgent, null, pipelineExecutor);
     }
 
     /**
@@ -87,6 +103,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                 l1ToolDispatcher,
                 subAgents,
                 defaultGeneralAgent,
+                null,
                 pipelineExecutor
         );
     }
@@ -103,7 +120,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                 .turnId(turnId)
                 .query(query)
                 .effectiveQuery(query)
-                .sink(new SseAgentEventSink(sessionId, ssePublisher))
+                .sink(new SseAgentEventSink(sessionId, ssePublisher, cardRegistry))
                 .build();
 
         CompletableFuture.runAsync(() -> {

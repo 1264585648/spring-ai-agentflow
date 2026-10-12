@@ -253,5 +253,30 @@ VALUES
     '业务层 ReActAgent，负责应急方案拟定与卡片装配'
   );
 
+-- -----------------------------------------------------------------------------
+-- 5. L2 向量知识库与排障 SOP 表 (sys_faq_definition)
+-- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS `sys_faq_definition`;
+CREATE TABLE `sys_faq_definition` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键自增ID',
+  `faq_code` VARCHAR(64) NOT NULL COMMENT 'FAQ唯一编码（如 FAQ_SRE_504）',
+  `faq_title` VARCHAR(255) NOT NULL COMMENT '标准问题（Canonical Question，QQ匹配主体）',
+  `similar_queries` TEXT DEFAULT NULL COMMENT '同义扩展问（逗号分隔或JSON数组）',
+  `standard_answer` TEXT NOT NULL COMMENT '官方核验的标准答复/排障SOP（高置信直接直出）',
+  `target_agent_code` VARCHAR(64) DEFAULT NULL COMMENT '中置信时引导的业务专家编码（如 SRE_COPILOT_AGENT）',
+  `embedding_vector` MEDIUMBLOB NOT NULL COMMENT '预计算的向量数据（float[] 序列化二进制）',
+  `embedding_model` VARCHAR(64) NOT NULL DEFAULT 'text-embedding-3-small' COMMENT '生成该向量的模型标识',
+  `dimension` INT NOT NULL DEFAULT 1536 COMMENT '向量维度',
+  `priority` INT NOT NULL DEFAULT 100 COMMENT '匹配优先级',
+  `is_enabled` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用：1-启用，0-停用',
+  `hit_count` BIGINT NOT NULL DEFAULT 0 COMMENT '历史累计命中次数',
+  `description` VARCHAR(255) DEFAULT NULL COMMENT '备注与业务场景说明',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_faq_code` (`faq_code`),
+  KEY `idx_enabled_priority` (`is_enabled`, `priority`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='L2高频标准问与SOP知识向量库';
+
 SET FOREIGN_KEY_CHECKS = 1;
 

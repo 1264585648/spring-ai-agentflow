@@ -152,8 +152,24 @@ public class L2VectorResolver implements IntentResolver {
     }
 }
 ```
-未来接入 VectorStore 时，**流水线和外部所有调用方的代码完全不需要改动任何一行**！
+未来接入 VectorStore 时，**流水线和外部所有调用方的代码完全不需要改动任何一行**！届时只需填充 `L2VectorResolver` 的双阈值判定即可：
 
+```java
+// 📐 未来 M5 接入 VectorStore 时的双阈值判定代码骨架
+VectorMatchCandidate topMatch = vectorStore.searchTop1(queryEmbedding);
+if (topMatch != null && topMatch.getScore() >= 0.88) {
+    // 1. 高置信度 (>=0.88): 标准 FAQ/SOP 答案短路直出，零 LLM 消耗
+    return Optional.of(Resolution.directReply("L2", topMatch.getFaqCode(), topMatch.getStandardAnswer()));
+} else if (topMatch != null && topMatch.getScore() >= 0.70) {
+    // 2. 中置信度 (0.70~0.88): 挂载检索上下文，路由至领域专家作答或生成推荐反问
+    context.getAttributes().put("L2_RAG_CONTEXT", topMatch.getStandardAnswer());
+    return Optional.of(Resolution.route("L2", PlanType.SINGLE, List.of(
+            new DispatchStep(1, topMatch.getTargetAgentCode(), "参考已知知识解答: " + topMatch.getQuestion(), Map.of())
+    ), "命中中置信度相似知识"));
+}
+// 3. 低置信度 (<0.70): 放行下沉至 L3 专家路由
+return Optional.empty();
+```
 ### 3. 第三关：L3 专家路由适配器 (`L3MasterAgentResolver`, Order = 300)
 将 `MasterAgentRouter` 封装为责任链的最后一道防线。调用现有动态意图路由算法，将产出的 `DispatchPlan` 转换为 `Resolution.Route`，支持单意图直通（SINGLE）、复合多专家协同（COMPOSITE）与通用兜底（FALLBACK）。
 
