@@ -1,16 +1,18 @@
 package com.example.springai.core.pipeline.impl;
 
-import com.example.springai.core.agent.AgentType;
 import com.example.springai.core.agent.GeneralChatAgent;
 import com.example.springai.core.agent.SubAgent;
 import com.example.springai.core.context.AgentContext;
 import com.example.springai.core.pipeline.AgentPipelineService;
-import com.example.springai.core.routing.IntentMatchResult;
+import com.example.springai.core.routing.IntentResolver;
 import com.example.springai.core.routing.L1RuleMatcher;
 import com.example.springai.core.routing.MasterAgentRouter;
-import com.example.springai.core.routing.dto.DispatchPlan;
+import com.example.springai.core.routing.Resolution;
 import com.example.springai.core.routing.dto.DispatchStep;
 import com.example.springai.core.routing.dto.PlanType;
+import com.example.springai.core.routing.impl.L1RuleResolver;
+import com.example.springai.core.routing.impl.L2VectorResolver;
+import com.example.springai.core.routing.impl.L3MasterAgentResolver;
 import com.example.springai.core.tool.L1ToolDispatcher;
 import com.example.springai.infra.sse.SseAgentEventSink;
 import com.example.springai.infra.sse.SseEventPublisher;
@@ -26,9 +28,9 @@ import java.util.concurrent.Executor;
 /**
  * 企业级通用智能协同执行流水线实现 (AgentPipelineServiceImpl)
  * 职责:
- * 1. L1 极速直出: 匹配规则引擎，静态答复或反射调度工具，耗时 < 30ms；
- * 2. 调度决策中枢: 未命中 L1 时，由 MasterAgentRouter 进行意图研判与多智能体任务分解 (DispatchPlan)；
- * 3. 纯净微内核调度: 动态匹配 Spring 容器中的 SubAgent 插件并派发，内核 100% 零业务依赖；
+ * 1. 意图解析责任链: 遍历有序的 IntentResolver 链 (L1 ➔ L2 ➔ L3)，按需短路与降级;
+ * 2. 统一决议调度: 针对 Resolution 的三种物理动作 (DirectReply / ToolCall / Route) 执行标准化调度;
+ * 3. 纯净微内核调度: 动态匹配 Spring 容器中的 SubAgent 插件并派发，内核 100% 零业务依赖;
  * 4. 全链路可观测: 统一通过 AgentContext 与 AgentEventSink 回传全生命周期事件。
  */
 @Service
@@ -39,13 +41,34 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
     private static final long L1_CHUNK_DELAY_MS = 12L;
 
     private final SseEventPublisher ssePublisher;
-    private final L1RuleMatcher l1RuleMatcher;
+    private final List<IntentResolver> intentResolvers;
     private final L1ToolDispatcher l1ToolDispatcher;
-    private final MasterAgentRouter masterAgentRouter;
     private final List<SubAgent> subAgents;
     private final GeneralChatAgent defaultGeneralAgent;
     private final Executor pipelineExecutor;
 
+    /**
+     * 主构造器：基于 Spring 标准责任链模式自动注入所有 IntentResolver 实现
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    public AgentPipelineServiceImpl(
+            SseEventPublisher ssePublisher,
+            List<IntentResolver> intentResolvers,
+            L1ToolDispatcher l1ToolDispatcher,
+            List<SubAgent> subAgents,
+            GeneralChatAgent defaultGeneralAgent,
+            @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
+        this.ssePublisher = ssePublisher;
+        this.intentResolvers = intentResolvers != null ? intentResolvers : Collections.emptyList();
+        this.l1ToolDispatcher = l1ToolDispatcher;
+        this.subAgents = subAgents != null ? subAgents : Collections.emptyList();
+        this.defaultGeneralAgent = defaultGeneralAgent;
+        this.pipelineExecutor = pipelineExecutor;
+    }
+
+    /**
+     * 兼容性构造器：允许外部或测试直接传递 L1RuleMatcher 与 MasterAgentRouter
+     */
     public AgentPipelineServiceImpl(
             SseEventPublisher ssePublisher,
             L1RuleMatcher l1RuleMatcher,
@@ -54,13 +77,18 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
             List<SubAgent> subAgents,
             GeneralChatAgent defaultGeneralAgent,
             @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
-        this.ssePublisher = ssePublisher;
-        this.l1RuleMatcher = l1RuleMatcher;
-        this.l1ToolDispatcher = l1ToolDispatcher;
-        this.masterAgentRouter = masterAgentRouter;
-        this.subAgents = subAgents != null ? subAgents : Collections.emptyList();
-        this.defaultGeneralAgent = defaultGeneralAgent;
-        this.pipelineExecutor = pipelineExecutor;
+        this(
+                ssePublisher,
+                List.of(
+                        new L1RuleResolver(l1RuleMatcher),
+                        new L2VectorResolver(),
+                        new L3MasterAgentResolver(masterAgentRouter)
+                ),
+                l1ToolDispatcher,
+                subAgents,
+                defaultGeneralAgent,
+                pipelineExecutor
+        );
     }
 
     @Override
@@ -80,93 +108,127 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
 
         CompletableFuture.runAsync(() -> {
             try {
-                // 1. 优先尝试 L1 规则毫秒级直出或命令直通
-                IntentMatchResult l1Result = l1RuleMatcher.match(query);
-                if (l1Result.isMatched()) {
-                    if ("STATIC_TEXT".equalsIgnoreCase(l1Result.getTargetType()) && l1Result.getDirectReply() != null) {
-                        log.info("[Pipeline] 命中 L1 静态指令直出，会话: {}, 规则: {}", sessionId, l1Result.getRuleCode());
-                        if (!context.getSink().progress("L1_HIT", "已命中 L1 快捷指令，毫秒级直出")) {
-                            return;
-                        }
-                        if (!streamText(context, l1Result.getDirectReply(), L1_CHUNK_DELAY_MS)) {
-                            return;
-                        }
-                        context.getSink().done();
-                        return;
-                    } else if ("TOOL".equalsIgnoreCase(l1Result.getTargetType())) {
-                        log.info("[Pipeline] 命中 L1 工具直通，会话: {}, 目标: {}, 参数: {}",
-                                sessionId, l1Result.getTargetRef(), l1Result.getExtractedParams());
-                        if (!context.getSink().progress("L1_TOOL", "已命中命令直通，正在调度工具: " + l1Result.getTargetRef())) {
-                            return;
-                        }
-
-                        String toolResult = l1ToolDispatcher.dispatch(l1Result.getTargetRef(), l1Result.getExtractedParams());
-                        if (!streamText(context, toolResult, L1_CHUNK_DELAY_MS)) {
-                            return;
-                        }
-                        context.getSink().done();
-                        return;
-                    } else {
-                        context.getSink().error("不支持的 L1 目标类型: " + l1Result.getTargetType());
-                        context.getSink().done();
-                        return;
+                // 1. 遍历意图解析责任链，逐层串行降级 (L1 -> L2 -> L3)
+                Resolution resolution = null;
+                for (IntentResolver resolver : intentResolvers) {
+                    Optional<Resolution> opt = resolver.resolve(context);
+                    if (opt.isPresent()) {
+                        resolution = opt.get();
+                        log.info("[Pipeline] 意图解析命中层级: {}, 决议类型: {}", resolver.level(), resolution.getClass().getSimpleName());
+                        break;
                     }
                 }
 
-                // 2. 未命中 L1，由 MasterAgent 进行调度决策规划 (DispatchPlan)
-                DispatchPlan plan = masterAgentRouter.route(query);
-                log.info("[Pipeline] MasterAgent 路由规划结论: type={}, reason={}", plan.getPlanType(), plan.getReason());
-
-                String thinkingMsg = "未命中 L1 极速指令，MasterAgent 正在分析诉求并规划调度链路: " + plan.getReason();
-                if (!context.getSink().thinking(thinkingMsg)) {
-                    return;
-                }
-
-                if (plan.getPlanType() == PlanType.COMPOSITE) {
-                    if (!context.getSink().progress("MULTI_AGENT_COLLAB", "启动多智能体复合协同：依次调用专业领域专家深入研判...")) {
-                        return;
-                    }
-                }
-
-                // 3. 提取执行步骤并派发至匹配的 SubAgent 插件
-                if (plan.getPlanType() == PlanType.FALLBACK) {
-                    if (plan.getReason() != null) {
-                        context.getSink().message(plan.getReason());
-                    } else {
-                        defaultGeneralAgent.execute(context, null);
-                    }
-                    context.getSink().done();
-                    log.info("[Pipeline] 流水线降级结束, sessionId: {}", sessionId);
-                    return;
-                }
-
-                List<DispatchStep> steps = plan.getSteps();
-                if (steps != null && !steps.isEmpty()) {
-                    for (DispatchStep step : steps) {
-                        String targetAgentCode = step.getTargetAgent();
-                        SubAgent matchedSubAgent = subAgents.stream()
-                                .filter(agent -> agent.supports(targetAgentCode))
-                                .findFirst()
-                                .orElse(defaultGeneralAgent);
-
-                        log.debug("[Pipeline] 派发 SubAgent 插件 (step {}): {} (targetCode: {})",
-                                step.getStepOrder(), matchedSubAgent.getClass().getSimpleName(), targetAgentCode);
-
-                        matchedSubAgent.execute(context, step);
-                    }
-                } else {
+                if (resolution == null) {
+                    log.warn("[Pipeline] 意图解析责任链未产生决议，由默认通用智能体兜底");
                     defaultGeneralAgent.execute(context, null);
+                    context.getSink().done();
+                    return;
                 }
 
-                // 4. 结束当前对话回合
-                context.getSink().done();
-                log.info("[Pipeline] 流水线执行完成, sessionId: {}", sessionId);
+                // 2. 根据统一决议契约执行标准化物理动作
+                if (resolution instanceof Resolution.DirectReply direct) {
+                    executeDirectReply(context, sessionId, direct);
+                } else if (resolution instanceof Resolution.ToolCall tool) {
+                    executeToolCall(context, sessionId, tool);
+                } else if (resolution instanceof Resolution.Route route) {
+                    executeRoute(context, sessionId, route);
+                } else {
+                    context.getSink().error("不支持的决议类型: " + resolution.getClass().getName());
+                    context.getSink().done();
+                }
 
             } catch (Exception ex) {
                 log.error("[Pipeline] 流水线执行异常, sessionId: {}", sessionId, ex);
                 context.getSink().error("流水线执行异常: " + ex.getMessage());
             }
         }, pipelineExecutor);
+    }
+
+    /**
+     * 执行纯文本直出决议 (L1 静态指令、L2 权威 FAQ 直出)
+     */
+    private void executeDirectReply(AgentContext context, String sessionId, Resolution.DirectReply direct) {
+        log.info("[Pipeline] 执行纯文本直出决议, level={}, ruleCode={}", direct.level(), direct.ruleCode());
+        String stage = "L1".equalsIgnoreCase(direct.level()) ? "L1_HIT" : "DIRECT_REPLY";
+        String desc = "L1".equalsIgnoreCase(direct.level()) ? "已命中 L1 快捷指令，毫秒级直出" : "命中标准答案，极速直出";
+
+        if (!context.getSink().progress(stage, desc)) {
+            return;
+        }
+        if (!streamText(context, direct.text(), L1_CHUNK_DELAY_MS)) {
+            return;
+        }
+        context.getSink().done();
+    }
+
+    /**
+     * 执行命令工具直通决议 (L1 精准命令直接反射执行 Spring @Tool)
+     */
+    private void executeToolCall(AgentContext context, String sessionId, Resolution.ToolCall tool) {
+        log.info("[Pipeline] 执行工具直通决议, level={}, ruleCode={}, toolRef={}", tool.level(), tool.ruleCode(), tool.toolRef());
+        String stage = "L1".equalsIgnoreCase(tool.level()) ? "L1_TOOL" : "TOOL_CALL";
+        if (!context.getSink().progress(stage, "已命中命令直通，正在调度工具: " + tool.toolRef())) {
+            return;
+        }
+
+        String toolResult = l1ToolDispatcher.dispatch(tool.toolRef(), tool.jsonArgs());
+        if (!streamText(context, toolResult, L1_CHUNK_DELAY_MS)) {
+            return;
+        }
+        context.getSink().done();
+    }
+
+    /**
+     * 执行智能体路由编排决议 (交由 SubAgent 业务专家协同或通用兜底)
+     */
+    private void executeRoute(AgentContext context, String sessionId, Resolution.Route route) {
+        log.info("[Pipeline] 执行智能体路由决议, level={}, planType={}, reason={}", route.level(), route.planType(), route.reason());
+        String thinkingMsg = "L1".equalsIgnoreCase(route.level())
+                ? "正在规划路由执行: " + route.reason()
+                : "未命中 L1 极速指令，MasterAgent 正在分析诉求并规划调度链路: " + route.reason();
+
+        if (!context.getSink().thinking(thinkingMsg)) {
+            return;
+        }
+
+        if (route.planType() == PlanType.COMPOSITE) {
+            if (!context.getSink().progress("MULTI_AGENT_COLLAB", "启动多智能体复合协同：依次调用专业领域专家深入研判...")) {
+                return;
+            }
+        }
+
+        if (route.planType() == PlanType.FALLBACK) {
+            if (route.reason() != null) {
+                context.getSink().message(route.reason());
+            } else {
+                defaultGeneralAgent.execute(context, null);
+            }
+            context.getSink().done();
+            log.info("[Pipeline] 流水线降级结束, sessionId: {}", sessionId);
+            return;
+        }
+
+        List<DispatchStep> steps = route.steps();
+        if (steps != null && !steps.isEmpty()) {
+            for (DispatchStep step : steps) {
+                String targetAgentCode = step.getTargetAgent();
+                SubAgent matchedSubAgent = subAgents.stream()
+                        .filter(agent -> agent.supports(targetAgentCode))
+                        .findFirst()
+                        .orElse(defaultGeneralAgent);
+
+                log.debug("[Pipeline] 派发 SubAgent 插件 (step {}): {} (targetCode: {})",
+                        step.getStepOrder(), matchedSubAgent.getClass().getSimpleName(), targetAgentCode);
+
+                matchedSubAgent.execute(context, step);
+            }
+        } else {
+            defaultGeneralAgent.execute(context, null);
+        }
+
+        context.getSink().done();
+        log.info("[Pipeline] 流水线执行完成, sessionId: {}", sessionId);
     }
 
     /**
