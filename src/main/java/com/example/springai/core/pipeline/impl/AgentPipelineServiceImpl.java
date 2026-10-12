@@ -3,10 +3,13 @@ package com.example.springai.core.pipeline.impl;
 import com.example.springai.core.agent.GeneralChatAgent;
 import com.example.springai.core.agent.SubAgent;
 import com.example.springai.core.context.AgentContext;
+import com.example.springai.core.memory.ConversationMemory;
+import com.example.springai.core.memory.ConversationMessage;
 import com.example.springai.core.pipeline.AgentPipelineService;
 import com.example.springai.core.routing.IntentResolver;
 import com.example.springai.core.routing.L1RuleMatcher;
 import com.example.springai.core.routing.MasterAgentRouter;
+import com.example.springai.core.routing.QueryRewriter;
 import com.example.springai.core.routing.Resolution;
 import com.example.springai.core.routing.dto.DispatchStep;
 import com.example.springai.core.routing.dto.PlanType;
@@ -20,6 +23,7 @@ import com.example.springai.web.dto.ChatRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -28,10 +32,11 @@ import java.util.concurrent.Executor;
 /**
  * 企业级通用智能协同执行流水线实现 (AgentPipelineServiceImpl)
  * 职责:
- * 1. 意图解析责任链: 遍历有序的 IntentResolver 链 (L1 ➔ L2 ➔ L3)，按需短路与降级;
- * 2. 统一决议调度: 针对 Resolution 的三种物理动作 (DirectReply / ToolCall / Route) 执行标准化调度;
- * 3. 纯净微内核调度: 动态匹配 Spring 容器中的 SubAgent 插件并派发，内核 100% 零业务依赖;
- * 4. 全链路可观测: 统一通过 AgentContext 与 AgentEventSink 回传全生命周期事件。
+ * 1. 会话记忆与意图改写: 提取多轮历史，执行 QueryRewriter 指代消除与实体补齐，生成有效提问 (effectiveQuery);
+ * 2. 意图解析责任链: 遍历有序的 IntentResolver 链 (L1 ➔ L2 ➔ L3)，按需短路与降级;
+ * 3. 统一决议调度: 针对 Resolution 的三种物理动作 (DirectReply / ToolCall / Route) 执行标准化调度;
+ * 4. 纯净微内核调度: 动态匹配 Spring 容器中的 SubAgent 插件并派发，内核 100% 零业务依赖;
+ * 5. 全链路可观测: 统一通过 AgentContext 与 AgentEventSink 回传全生命周期事件并归档问答记忆。
  */
 @Service
 @Slf4j
@@ -39,6 +44,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
 
     private static final int STREAM_CHUNK_SIZE = 8;
     private static final long L1_CHUNK_DELAY_MS = 12L;
+    private static final int MAX_HISTORY_ROUNDS = 6;
 
     private final SseEventPublisher ssePublisher;
     private final List<IntentResolver> intentResolvers;
@@ -46,10 +52,12 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
     private final List<SubAgent> subAgents;
     private final GeneralChatAgent defaultGeneralAgent;
     private final com.example.springai.core.card.CardRegistry cardRegistry;
+    private final ConversationMemory conversationMemory;
+    private final QueryRewriter queryRewriter;
     private final Executor pipelineExecutor;
 
     /**
-     * 主构造器：基于 Spring 标准责任链与 CardRegistry 注入
+     * 主构造器：基于 Spring 标准责任链、CardRegistry、ConversationMemory 与 QueryRewriter 注入
      */
     @org.springframework.beans.factory.annotation.Autowired
     public AgentPipelineServiceImpl(
@@ -59,6 +67,8 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
             List<SubAgent> subAgents,
             GeneralChatAgent defaultGeneralAgent,
             com.example.springai.core.card.CardRegistry cardRegistry,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) ConversationMemory conversationMemory,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) QueryRewriter queryRewriter,
             @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
         this.ssePublisher = ssePublisher;
         this.intentResolvers = intentResolvers != null ? intentResolvers : Collections.emptyList();
@@ -66,7 +76,23 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
         this.subAgents = subAgents != null ? subAgents : Collections.emptyList();
         this.defaultGeneralAgent = defaultGeneralAgent;
         this.cardRegistry = cardRegistry;
+        this.conversationMemory = conversationMemory;
+        this.queryRewriter = queryRewriter;
         this.pipelineExecutor = pipelineExecutor;
+    }
+
+    /**
+     * 兼容性构造器：不传递 Memory 和 Rewriter
+     */
+    public AgentPipelineServiceImpl(
+            SseEventPublisher ssePublisher,
+            List<IntentResolver> intentResolvers,
+            L1ToolDispatcher l1ToolDispatcher,
+            List<SubAgent> subAgents,
+            GeneralChatAgent defaultGeneralAgent,
+            com.example.springai.core.card.CardRegistry cardRegistry,
+            @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
+        this(ssePublisher, intentResolvers, l1ToolDispatcher, subAgents, defaultGeneralAgent, cardRegistry, null, null, pipelineExecutor);
     }
 
     /**
@@ -79,7 +105,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
             List<SubAgent> subAgents,
             GeneralChatAgent defaultGeneralAgent,
             @Qualifier("agentPipelineExecutor") Executor pipelineExecutor) {
-        this(ssePublisher, intentResolvers, l1ToolDispatcher, subAgents, defaultGeneralAgent, null, pipelineExecutor);
+        this(ssePublisher, intentResolvers, l1ToolDispatcher, subAgents, defaultGeneralAgent, null, null, null, pipelineExecutor);
     }
 
     /**
@@ -104,6 +130,8 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                 subAgents,
                 defaultGeneralAgent,
                 null,
+                null,
+                null,
                 pipelineExecutor
         );
     }
@@ -115,17 +143,33 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
         String turnId = UUID.randomUUID().toString();
         log.info("[Pipeline] 启动处理会话: {}, 回合: {}, 问题: {}", sessionId, turnId, query);
 
+        // 1. 提取当前会话最近历史问答记录
+        List<ConversationMessage> history = conversationMemory != null
+                ? conversationMemory.getRecentMessages(sessionId, MAX_HISTORY_ROUNDS)
+                : Collections.emptyList();
+
         AgentContext context = AgentContext.builder()
                 .sessionId(sessionId)
                 .turnId(turnId)
                 .query(query)
                 .effectiveQuery(query)
-                .sink(new SseAgentEventSink(sessionId, ssePublisher, cardRegistry))
+                .history(history)
+                .sink(new SseAgentEventSink(sessionId, ssePublisher, cardRegistry, conversationMemory, query))
                 .build();
 
         CompletableFuture.runAsync(() -> {
             try {
-                // 1. 遍历意图解析责任链，逐层串行降级 (L1 -> L2 -> L3)
+                // 2. 前置意图改写：若存在多轮历史，执行指代消除与实体补全
+                if (queryRewriter != null && history != null && !history.isEmpty()) {
+                    String rewritten = queryRewriter.rewrite(context, history);
+                    if (StringUtils.hasText(rewritten) && !rewritten.trim().equalsIgnoreCase(query.trim())) {
+                        log.info("[Pipeline] 意图指代消除完成: '{}' ➔ '{}'", query, rewritten);
+                        context.setEffectiveQuery(rewritten);
+                        context.getSink().thinking("检测到多轮上下文，问题已自动补全为: " + rewritten);
+                    }
+                }
+
+                // 3. 遍历意图解析责任链，逐层串行降级 (L1 -> L2 -> L3)
                 Resolution resolution = null;
                 for (IntentResolver resolver : intentResolvers) {
                     Optional<Resolution> opt = resolver.resolve(context);
@@ -143,7 +187,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService {
                     return;
                 }
 
-                // 2. 根据统一决议契约执行标准化物理动作
+                // 4. 根据统一决议契约执行标准化物理动作
                 if (resolution instanceof Resolution.DirectReply direct) {
                     executeDirectReply(context, sessionId, direct);
                 } else if (resolution instanceof Resolution.ToolCall tool) {

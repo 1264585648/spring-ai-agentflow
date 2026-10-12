@@ -57,6 +57,12 @@ public class AgentContext {
     private AgentEventSink sink;
 
     /**
+     * 当前会话最近的历史问答记录快照
+     */
+    @Builder.Default
+    private java.util.List<com.example.springai.core.memory.ConversationMessage> history = new java.util.ArrayList<>();
+
+    /**
      * 存取属性便捷方法
      */
     public void setAttribute(String key, Object value) {
