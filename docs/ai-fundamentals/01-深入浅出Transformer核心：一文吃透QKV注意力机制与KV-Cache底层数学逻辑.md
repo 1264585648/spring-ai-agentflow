@@ -57,6 +57,8 @@ Transformer 彻底废弃了循环结构，提出了 **自注意力机制（Self-
 | **Key (K)** | **书架上每本书的“书脊索书标签”** | **被查属性**：“我是上下文中的词，我身上有哪些特征可以供别人来匹配检索？” |
 | **Value (V)** | **书本里白纸黑字的“正文内容”** | **信息载荷**：“如果别人检索匹配到了我，我能提供什么具体的语义内容给对方？” |
 
+![QKV 投影与三重身份拆解](./assets/01_qkv_projection.png)
+
 ```mermaid
 flowchart TD
     subgraph Input ["输入层: 静态 Embedding 向量"]
@@ -99,6 +101,8 @@ flowchart TD
 $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V$$
 
 下面通过严格的**数据流图解与张量维度（Tensor Shapes）**拆解每一个运算步骤：
+
+![Transformer 注意力机制流转图](./assets/02_attention_mechanism.png)
 
 ```mermaid
 flowchart TD
@@ -160,6 +164,8 @@ flowchart TD
 1. **Pre-fill（预填充阶段）**：用户输入一段 Prompt（如 100 个词），并行计算出这 100 个词的 Q、K、V；
 2. **Decode（自回归逐字生成阶段）**：一次只能根据上文吐出 1 个新词。
 
+![LLM 解码时为何只缓存 K 和 V](./assets/03_kv_cache_why.png)
+
 ```mermaid
 flowchart TD
     subgraph DecodeTimeStep ["解码时刻: 正在预测第 t+1 个新 Token"]
@@ -218,6 +224,8 @@ flowchart TD
 
 ### 2. PagedAttention（借鉴操作系统的虚拟分页）
 vLLM 借鉴了操作系统虚拟内存（Virtual Memory Paging）的设计思想：
+
+![PagedAttention 显存分页管理示意图](./assets/04_paged_attention.png)
 
 ```mermaid
 flowchart TD
