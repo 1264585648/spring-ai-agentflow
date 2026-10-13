@@ -7,63 +7,29 @@ import com.example.springai.core.card.model.InteractiveCard;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * 通用人机协同卡片服务端状态机注册表 (CardRegistry)
- * 职责:
- * 1. 签发登记: 智能体下发卡片时建立原始快照 (Snapshot) 并标记为 ISSUED;
- * 2. 状态申领与排他锁: 提交时校验 actionId 与 sessionId 合法性，原子跃迁为 SUBMITTING;
- * 3. 防篡改核验: 比对 submittedValues 与原始快照，确保 editable=false 字段未被恶意篡改;
- * 4. 终态流转与归档: 处理成功流转为 SUBMITTED，处理失败流转为 FAILED 或重试释放。
- */
+/** 提案签发、快照及原子状态流转。实现方不得向调用方泄露可修改的存储对象。 */
 public interface CardRegistry {
-
-    /**
-     * 登记并签发交互卡片原始快照
-     *
-     * @param sessionId 所属会话 ID
-     * @param card      智能体装配下发的原始卡片对象
-     */
+    /** actionId 必须唯一，禁止覆盖已签发记录；sessionId/cardType 必须非空。 */
     void issue(String sessionId, InteractiveCard card);
 
-    /**
-     * 申领卡片并抢占提交锁 (状态从 ISSUED 跃迁至 SUBMITTING)
-     *
-     * @param actionId  卡片唯一动作 Token
-     * @param sessionId 提交方声明的会话 ID
-     * @return 申领到的卡片快照记录
-     */
+    /** 仅 ISSUED 且未过期的同会话提案可以跃迁为 SUBMITTING。 */
     CardRecord claim(String actionId, String sessionId);
 
-    /**
-     * 执行参数防篡改与合规审计
-     *
-     * @param record          已申领的卡片记录
-     * @param submittedValues 用户提交的表单字段名值对
-     */
+    /** 兼容的纯参数校验入口；执行时由 ActionGate 重建最终参数。 */
     void validate(CardRecord record, Map<String, Object> submittedValues);
 
-    /**
-     * 标记卡片处理成功并归档 (流转为 SUBMITTED 终态)
-     *
-     * @param actionId 卡片唯一动作 Token
-     * @param result   业务处理器返回的成功结果
-     */
+    /** 只允许 SUBMITTING -> SUBMITTED，返回值必须明确成功。 */
     void complete(String actionId, CardSubmitResult result);
 
     /**
-     * 标记卡片处理失败
-     *
-     * @param actionId   卡片唯一动作 Token
-     * @param failReason 失败原因
-     * @param allowRetry 是否允许专员重试 (true 则退回 ISSUED 状态，false 则标记为 FAILED)
+     * 仅用于能够证明尚未执行的前置失败。allowRetry 不得用于执行超时。
+     * ActionGate 的执行后异常一律调用 markExecutionUnknown。
      */
     void fail(String actionId, String failReason, boolean allowRetry);
 
-    /**
-     * 获取指定卡片记录 (只读查询)
-     *
-     * @param actionId 卡片唯一动作 Token
-     * @return 卡片记录 Optional
-     */
+    /** 执行已开始但结果无法确认，禁止自动重试或重新激活该 actionId。 */
+    void markExecutionUnknown(String actionId, String reason);
+
+    /** 返回脱离存储的快照副本。 */
     Optional<CardRecord> getRecord(String actionId);
 }

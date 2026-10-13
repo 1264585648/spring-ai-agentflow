@@ -1,5 +1,13 @@
 import { SseEventType } from '../types/chat';
 
+/** 只有服务端明确确认尚未执行且允许修正时，才允许再次提交。 */
+export class CardSubmissionError extends Error {
+  constructor(message: string, public readonly retryable: boolean, public readonly errorType: string) {
+    super(message);
+    this.name = 'CardSubmissionError';
+  }
+}
+
 export class SseChatClient {
   private eventSource: EventSource | null = null;
   private sessionId: string = '';
@@ -61,26 +69,39 @@ export class SseChatClient {
     return res.json();
   }
 
-  /**
-   * 用户在通用卡片上点击确认提交
-   */
+  /** 用户确认。网络断开/回执损坏不等于后端没有执行，不自动建议重试。 */
   public async submitCard(
     actionId: string,
     sessionId: string,
     cardType: string,
     formValues: Record<string, any>
   ) {
-    const res = await fetch('/api/v1/card/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        actionId,
-        sessionId,
-        cardType,
-        formValues,
-      }),
-    });
-    return res.json();
+    try {
+      const res = await fetch('/api/v1/card/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionId, sessionId, cardType, formValues }),
+      });
+      const body = await res.json();
+      if (!body || typeof body !== 'object' || typeof body.code !== 'number') {
+        throw new Error('Invalid card submission response');
+      }
+      if (!res.ok || body.code !== 200) {
+        throw new CardSubmissionError(
+          typeof body.message === 'string' ? body.message : '提交未完成，请核查动作状态',
+          res.status === 400 && body.retryable === true,
+          typeof body.errorType === 'string' ? body.errorType : 'SUBMISSION_ERROR'
+        );
+      }
+      return body;
+    } catch (error) {
+      if (error instanceof CardSubmissionError) throw error;
+      throw new CardSubmissionError(
+        '提交回执未确认，请先核查动作状态；不要重复提交或重新发起相同操作',
+        false,
+        'RESPONSE_UNKNOWN'
+      );
+    }
   }
 
   /**

@@ -59,3 +59,9 @@ apollo:
     env: ${APOLLO_ENV:DEV}
     cluster: ${APOLLO_CLUSTER:default}
     operator: ${APOLLO_OPENAPI_OPERATOR:apollo}
+
+# 仅供当前单机 Mock 演示。框架缺省值为全部拒绝，真实写仍须完整认证/授权与持久幂等。
+agentflow:
+  actions:
+    allow-mock-submissions: ${AGENTFLOW_ACTIONS_ALLOW_MOCK_SUBMISSIONS:true}
+    real-writes-enabled: false

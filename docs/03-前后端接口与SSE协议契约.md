@@ -23,6 +23,7 @@ sequenceDiagram
     participant Chat as ChatController
     participant Pipeline as AgentPipeline
     participant Card as CardInteractionController
+    participant Gate as ActionGate
     participant SPI as CardSubmitHandler
 
     Note over UI, Chat: 1. 建立长连接（跨回合复用）
@@ -49,8 +50,12 @@ sequenceDiagram
 
     Note over UI, SPI: 5. 用户确认提交
     UI->>Card: POST /api/v1/card/submit {actionId, sessionId, cardType, formValues}
-    Card->>SPI: 按 cardType 路由到业务处理器
-    SPI-->>Card: CardSubmitResult {ticketId}
+    Card->>Gate: submit(HTTP DTO, 服务端 Principal)
+    Gate->>Gate: 绑定快照、重建参数、授权、原子申领
+    Gate->>SPI: handleSubmit(ApprovedCardSubmission)
+    SPI-->>Gate: CardSubmitResult {ticketId}
+    Gate->>Gate: 归档成功；执行后异常则标记结果未知
+    Gate-->>Card: 服务端关联信息与结果
     Card-->>UI: 200 {ticketId}
     Card-->>UI: event: message（提交确认提示）
 ```
@@ -108,7 +113,7 @@ sequenceDiagram
   "cardType": "GITHUB_ISSUE_SUBMIT",
   "formValues": {
     "repo": "spring-projects/spring-ai",
-    "issue_type": "Bug Report",
+    "issue_type": "Bug Report (缺陷报告)",
     "title": "[Bug]: Redis 连接池高并发下偶发泄漏问题",
     "labels": "bug, high-priority, redis",
     "body": "在高并发压测场景下，Redis 连接池句柄未被正确归还，导致连接池耗尽。"
@@ -124,15 +129,33 @@ sequenceDiagram
   "cardType": "GITHUB_ISSUE_SUBMIT"
 }
 ```
-* **错误码**：
+* **媒体类型**：`application/json`。成功响应结构不变；`actionId`、`sessionId`、`cardType` 均必填。
+* **错误契约**：
 
-  | 场景 | HTTP | `code` |
-  | :--- | :--- | :--- |
-  | `actionId` 为空 / 无处理器支持该 `cardType` | 400 | 400 |
-  | 同一 `actionId` 在 10 分钟内重复提交 | 409 | 409 |
-  | 业务处理器返回失败或抛出异常（允许重试） | 500 | 500 |
+  | 场景 | HTTP / code | errorType | retryable |
+  | :--- | :--- | :--- | :--- |
+  | 必填标识为空、字段类型/数值范围/必填值非法、执行前业务校验不通过 | 400 | INVALID_SUBMISSION | true |
+  | 未签发或已过期 | 400 | CARD_NOT_FOUND | false |
+  | 会话/类型不匹配、只读篡改、未知字段、授权拒绝或写开关关闭 | 403 | CARD_FORBIDDEN | false |
+  | 正在执行、已完成、已取消、失败或结果未知的提案重复提交 | 409 | CARD_STATE_CONFLICT | false |
+  | 执行开始后异常、超时或未返回确定成功 | 500 | EXECUTION_UNKNOWN | false |
+  | 其他未分类的内部错误 | 500 | SUBMISSION_ERROR | false |
 
-* **服务端校验（📐 目标契约）**：提交时服务端必须校验 `actionId` 由服务端签发且属于该会话、卡片处于待提交状态、`editable=false` 字段未被篡改、可编辑字段满足 `minLimit` / `maxLimit` / `required`。当前实现只做 `actionId` 幂等（进程内、10 分钟 TTL），只读约束只在前端生效。
+```json
+{
+  "code": 500,
+  "message": "动作执行结果未知，请先核查外部系统；不要重复提交或重新签发同一动作",
+  "errorType": "EXECUTION_UNKNOWN",
+  "retryable": false
+}
+```
+
+* **服务端校验**：ActionGate 使用签发记录绑定类型和会话；处理器按服务端类型选择。只读值以服务端快照为准，可以省略回传，回传时必须一致。可编辑字段缺省沿用预填值；显式清空必填字段会失败。只允许签发过的字段，拒绝对象/数组输入。number 接受有限数字或数字字符串，按 BigDecimal 校验 required/minLimit/maxLimit；text/textarea/select 只接受字符串。select 尚无选项白名单契约。
+* **认证与授权**：真实写缺省禁用。即使显式启用，仍必须有服务端 Principal 和宿主 ActionAuthorizer；无插件时拒绝，不信任 JSON 或任意请求头中的身份。sessionId 匹配只证明提案绑定，不替代用户/租户授权。演示配置只开放明确的模拟 Handler，actorId 标记为 mock-demo。
+* **状态与重试**：提案待处理有效期为 15 分钟。只有未执行的校验错误允许修正；一旦进入执行器，失败不能自动重置为 ISSUED。EXECUTION_UNKNOWN 必须先核查，禁止换 actionId 重签同一动作来绕过去重。存储仍为单进程内存，不承诺跨节点、重启恢复或 exactly-once。
+* **前端行为**：保留 errorType/retryable；不可重试或回执损坏/网络断开时停止再次提交。归档成功后的 SSE 通知失败不改变 HTTP 成功结果。当前仍是卡片独立确认，不恢复原聊天回合，也不增加 SSE 事件。
+* **跨域**：卡片入口不再设置通配 CORS；同源/开发代理可用。跨域宿主需独立配置可信来源、认证与 CSRF 防护。
+* **SPI 迁移**：CardSubmitHandler 现在接收 ApprovedCardSubmission；外部 CardRegistry 需实现结果未知的状态流转。详见 [16-最小ActionGate与可信卡片提交](./handbook/16-最小ActionGate与可信卡片提交.md)。
 
 ### 3.5 快捷指令面板 ✅
 * **路径**：`GET /api/v1/commands/palette`
@@ -236,8 +259,8 @@ data: <JSON>
 | :--- | :--- | :--- |
 | `fieldKey` | String | 字段键，提交时作为 `formValues` 的 key |
 | `label` | String | 展示名 |
-| `type` | String | `text` / `number` / `textarea` |
-| `value` | Any | 推荐预填值 |
+| `type` | String | `text` / `number` / `textarea` / `select` |
+| `value` | String / Number / null | 推荐预填值；不支持对象和数组 |
 | `minLimit` / `maxLimit` | Any | 数值上下限（可选） |
 | `editable` | Boolean | `false` 表示只读锁定 |
 | `required` | Boolean | 是否必填 |
