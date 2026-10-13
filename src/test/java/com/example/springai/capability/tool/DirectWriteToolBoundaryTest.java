@@ -13,6 +13,8 @@ import com.example.springai.capability.ops.port.OpsActionPort;
 import com.example.springai.capability.ops.tool.OpsActionTool;
 import com.example.springai.core.agent.AgentPromptRegistry;
 import com.example.springai.core.card.CardRegistry;
+import com.example.springai.core.card.action.ActionAuthorizer;
+import com.example.springai.core.card.action.ActionGate;
 import com.example.springai.core.card.dto.CardSubmitRequest;
 import com.example.springai.core.card.impl.InMemoryCardRegistry;
 import com.example.springai.core.card.model.InteractiveCard;
@@ -184,10 +186,11 @@ class DirectWriteToolBoundaryTest {
 
         CardRegistry registry = new InMemoryCardRegistry();
         registry.issue("session-write-boundary", card);
-        // 显式注入 Mock Port；本测试不替代后续的 Handler 自动装配修复。
+        // 显式使用模拟策略；真实容器装配另由 ActionGateConfigurationTest 覆盖。
         OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler(opsActionPort);
         CardInteractionController controller = new CardInteractionController(
-                List.of(handler), mock(SseEventPublisher.class), registry);
+                new ActionGate(registry, List.of(handler), ActionAuthorizer.DENY_ALL, true, false),
+                mock(SseEventPublisher.class));
         Map<String, Object> formValues = new LinkedHashMap<>();
         card.getFields().forEach(field -> formValues.put(field.getFieldKey(), field.getValue()));
         CardSubmitRequest request = new CardSubmitRequest();
@@ -196,12 +199,12 @@ class DirectWriteToolBoundaryTest {
         request.setCardType(card.getCardType());
         request.setFormValues(formValues);
 
-        var response = controller.submitCard(request);
+        var response = controller.submitCard(request, null);
         assertEquals(200, response.getStatusCode().value());
         assertNotNull(response.getBody());
         assertTrue(String.valueOf(response.getBody().get("ticketId")).startsWith("OPS-"));
         assertEquals(CardState.SUBMITTED, registry.getRecord(card.getActionId()).orElseThrow().getState());
-        assertEquals(409, controller.submitCard(request).getStatusCode().value());
+        assertEquals(409, controller.submitCard(request, null).getStatusCode().value());
         verify(opsActionPort, times(1)).executeAction(any(OpsActionParam.class));
     }
 

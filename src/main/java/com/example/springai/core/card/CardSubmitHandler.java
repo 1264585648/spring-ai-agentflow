@@ -1,27 +1,23 @@
 package com.example.springai.core.card;
 
-import com.example.springai.core.card.dto.CardSubmitRequest;
+import com.example.springai.core.card.action.ApprovedCardSubmission;
 import com.example.springai.core.card.dto.CardSubmitResult;
 
-/**
- * 核心 SPI 扩展点: 交互卡片提交处理器
- * 任何业务方 (如业务审批 BPM、HR 流程、IT 运维) 只需实现此接口即可无缝对接自己的后台系统
- */
+/** 通用卡片执行 SPI。所有 HTTP 提交须先经过 ActionGate，不接收客户端原始请求。 */
 public interface CardSubmitHandler {
-
-    /**
-     * 判断当前处理器是否支持该卡片类型
-     *
-     * @param cardType 卡片类型 (如: SPECIAL_APPROVAL, LEAVE_REQUEST, IT_APPLY)
-     * @return 是否支持
-     */
     boolean supports(String cardType);
 
+    /** 默认视为真实写能力。只有确实不访问真实写系统的实现才能声明模拟。 */
+    default boolean isSimulation() {
+        return false;
+    }
+
+    /** 无副作用参数预检；抛出 IllegalArgumentException 时保留提案供修正。 */
+    default void validate(ApprovedCardSubmission submission) { }
+
     /**
-     * 执行实际的业务提交逻辑 (如: 调用外部 OpenAPI、保存数据库)
-     *
-     * @param request 提交入参
-     * @return 处理结果 (包含生成的业务单号 ticketId)
+     * 执行一次经批准的提交。actionId 可作为下游业务幂等键。
+     * 异常或失败响应不保证外部未执行，ActionGate 将保守地禁止再次提交。
      */
-    CardSubmitResult handleSubmit(CardSubmitRequest request);
+    CardSubmitResult handleSubmit(ApprovedCardSubmission submission);
 }

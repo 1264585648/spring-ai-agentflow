@@ -8,147 +8,114 @@ import com.example.springai.core.card.model.CardFormField;
 import com.example.springai.core.card.model.CardRecord;
 import com.example.springai.core.card.model.InteractiveCard;
 import com.example.springai.core.card.state.CardState;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 class CardRegistryTest {
+    private final Clock clock = mock(Clock.class);
+    private final InMemoryCardRegistry registry = new InMemoryCardRegistry(clock);
 
-    private InMemoryCardRegistry registry;
-
-    @BeforeEach
-    void setUp() {
-        registry = new InMemoryCardRegistry();
-    }
-
-    private InteractiveCard buildSampleCard(String actionId) {
+    private InteractiveCard issue() {
+        when(clock.millis()).thenReturn(1000L);
         InteractiveCard card = new InteractiveCard();
-        card.setActionId(actionId);
-        card.setCardType("OPS_KILL_ACTION");
-        card.setTitle("🚨 应急止血预案确认");
-
-        CardFormField serviceField = new CardFormField("service", "服务名", "text", "order-service", false, true);
-        CardFormField reasonField = new CardFormField("reason", "处置理由", "text", "慢查打满连接池", true, false);
-
-        card.setFields(List.of(serviceField, reasonField));
+        card.setActionId("act-1");
+        card.setCardType("TEST_ACTION");
+        card.setFields(List.of(new CardFormField("target", "目标", "text", "resource-A", false, true),
+                new CardFormField("reason", "原因", "text", "初始原因", true, false)));
+        registry.issue("session-A", card);
         return card;
     }
 
     @Test
-    @DisplayName("测试卡片签发与正常申领跃迁 (ISSUED -> SUBMITTING)")
-    void testIssueAndClaimSuccess() {
-        InteractiveCard card = buildSampleCard("act-101");
-        registry.issue("sess-1", card);
-
-        CardRecord record = registry.claim("act-101", "sess-1");
-        assertNotNull(record);
-        assertEquals(CardState.SUBMITTING, record.getState());
-        assertEquals("order-service", record.getSnapshot().getFields().get(0).getValue());
+    void lifecycleAndDuplicateClaims() {
+        issue();
+        assertEquals(CardState.SUBMITTING, registry.claim("act-1", "session-A").getState());
+        assertThrows(CardStateConflictException.class, () -> registry.claim("act-1", "session-A"));
+        registry.complete("act-1", CardSubmitResult.ok("T-1", "ok"));
+        assertEquals(CardState.SUBMITTED, registry.getRecord("act-1").orElseThrow().getState());
+        assertEquals("T-1", registry.getRecord("act-1").orElseThrow().getTicketId());
+        assertThrows(CardStateConflictException.class, () -> registry.claim("act-1", "session-A"));
     }
 
     @Test
-    @DisplayName("测试未登记 actionId 申领抛出 CardNotFoundException")
-    void testUnissuedActionIdThrowsNotFound() {
-        assertThrows(CardNotFoundException.class, () -> registry.claim("fake-action-id", "sess-1"));
+    void unissuedAndWrongOrMissingSessionsAreRejected() {
+        issue();
+        assertThrows(CardNotFoundException.class, () -> registry.claim("unknown", "session-A"));
+        assertThrows(CardSecurityException.class, () -> registry.claim("act-1", "session-B"));
+        assertThrows(IllegalArgumentException.class, () -> registry.claim("act-1", null));
+        assertThrows(IllegalArgumentException.class, () -> registry.claim("act-1", " "));
+        assertEquals(CardState.ISSUED, registry.getRecord("act-1").orElseThrow().getState());
     }
 
     @Test
-    @DisplayName("测试跨会话越权操作拦截 (抛出 CardSecurityException)")
-    void testCrossSessionClaimThrowsSecurityException() {
-        InteractiveCard card = buildSampleCard("act-102");
-        registry.issue("sess-user-A", card);
-
-        // 用户 B 试图使用该 actionId
-        assertThrows(CardSecurityException.class, () -> registry.claim("act-102", "sess-user-B"));
+    void returnedSnapshotsAndOriginalCardCannotMutateStoredProposal() {
+        InteractiveCard original = issue();
+        original.getFields().get(0).setValue("resource-B");
+        CardRecord returned = registry.getRecord("act-1").orElseThrow();
+        returned.setSessionId("other");
+        returned.setState(CardState.SUBMITTED);
+        returned.getSnapshot().getFields().get(0).setValue("resource-C");
+        CardRecord claimed = registry.claim("act-1", "session-A");
+        assertEquals("resource-A", claimed.getSnapshot().getFields().get(0).getValue());
+        claimed.setState(CardState.ISSUED);
+        assertThrows(CardStateConflictException.class, () -> registry.claim("act-1", "session-A"));
     }
 
     @Test
-    @DisplayName("测试重复提交冲突 (抛出 CardStateConflictException)")
-    void testDuplicateClaimReturnsConflict() {
-        InteractiveCard card = buildSampleCard("act-103");
-        registry.issue("sess-1", card);
-
-        // 第一次申领成功
-        registry.claim("act-103", "sess-1");
-
-        // 并发或重复连击申领被拦截
-        assertThrows(CardStateConflictException.class, () -> registry.claim("act-103", "sess-1"));
+    void duplicateIssuanceNeverResetsAnAction() {
+        InteractiveCard card = issue();
+        registry.claim("act-1", "session-A");
+        registry.markExecutionUnknown("act-1", "response lost");
+        assertThrows(CardStateConflictException.class, () -> registry.issue("session-A", card));
+        assertThrows(CardStateConflictException.class, () -> registry.fail("act-1", "unsafe retry", true));
+        assertEquals(CardState.EXECUTION_UNKNOWN, registry.getRecord("act-1").orElseThrow().getState());
     }
 
     @Test
-    @DisplayName("测试只读字段被恶意篡改时抛出 CardSecurityException")
-    void testTamperingReadOnlyFieldThrowsSecurityException() {
-        InteractiveCard card = buildSampleCard("act-104");
-        registry.issue("sess-1", card);
-
-        CardRecord record = registry.claim("act-104", "sess-1");
-
-        // 恶意用户抓包将只读的 order-service 篡改为 payment-db
-        Map<String, Object> tamperedValues = Map.of(
-                "service", "payment-db",
-                "reason", "常规排查"
-        );
-
-        CardSecurityException ex = assertThrows(CardSecurityException.class, () ->
-                registry.validate(record, tamperedValues)
-        );
+    void readOnlyTamperingFailsAndEditableChangesPass() {
+        issue();
+        CardRecord record = registry.getRecord("act-1").orElseThrow();
+        var ex = assertThrows(CardSecurityException.class,
+                () -> registry.validate(record, Map.of("target", "resource-B")));
         assertTrue(ex.getMessage().contains("只读参数"));
-        assertTrue(ex.getMessage().contains("order-service"));
+        assertFalse(ex.getMessage().contains("resource-A")); // 不向错误响应泄露原始值。
+        assertDoesNotThrow(() -> registry.validate(record, Map.of("reason", "新原因")));
     }
 
     @Test
-    @DisplayName("测试可编辑字段微调允许通过")
-    void testEditableFieldModificationAllowed() {
-        InteractiveCard card = buildSampleCard("act-105");
-        registry.issue("sess-1", card);
-
-        CardRecord record = registry.claim("act-105", "sess-1");
-
-        // 只读字段保持一致，可编辑字段被工程师修改
-        Map<String, Object> validValues = Map.of(
-                "service", "order-service",
-                "reason", "【专员修改】：确认慢查无索引，核准紧急止血"
-        );
-
-        assertDoesNotThrow(() -> registry.validate(record, validValues));
+    void expiredIssuedCardCannotStart() {
+        issue();
+        when(clock.millis()).thenReturn(901000L);
+        assertThrows(CardNotFoundException.class, () -> registry.claim("act-1", "session-A"));
+        assertEquals(CardState.EXPIRED, registry.getRecord("act-1").orElseThrow().getState());
     }
 
     @Test
-    @DisplayName("测试成功归档与终态流转 (SUBMITTING -> SUBMITTED)")
-    void testCompleteCard() {
-        InteractiveCard card = buildSampleCard("act-106");
-        registry.issue("sess-1", card);
-        registry.claim("act-106", "sess-1");
-
-        registry.complete("act-106", CardSubmitResult.ok("OPS-20261012-001", "执行成功"));
-
-        CardRecord record = registry.getRecord("act-106").orElseThrow();
-        assertEquals(CardState.SUBMITTED, record.getState());
-        assertEquals("OPS-20261012-001", record.getTicketId());
-
-        // 终态下再次申领必须抛出冲突异常
-        assertThrows(CardStateConflictException.class, () -> registry.claim("act-106", "sess-1"));
+    void expiryDuringExecutionDoesNotOverwriteSubmittingOrCompletedState() {
+        issue();
+        registry.claim("act-1", "session-A");
+        when(clock.millis()).thenReturn(901000L);
+        assertThrows(CardStateConflictException.class, () -> registry.claim("act-1", "session-A"));
+        assertEquals(CardState.SUBMITTING, registry.getRecord("act-1").orElseThrow().getState());
+        registry.complete("act-1", CardSubmitResult.ok("T-1", "ok"));
+        assertThrows(CardStateConflictException.class, () -> registry.claim("act-1", "session-A"));
+        assertEquals(CardState.SUBMITTED, registry.getRecord("act-1").orElseThrow().getState());
     }
 
     @Test
-    @DisplayName("测试处理失败时释放锁允许重试")
-    void testFailAllowsRetry() {
-        InteractiveCard card = buildSampleCard("act-107");
-        registry.issue("sess-1", card);
-        registry.claim("act-107", "sess-1");
-
-        // 模拟执行失败并允许重试
-        registry.fail("act-107", "连接超时", true);
-
-        CardRecord record = registry.getRecord("act-107").orElseThrow();
-        assertEquals(CardState.ISSUED, record.getState());
-
-        // 允许重新申领
-        assertDoesNotThrow(() -> registry.claim("act-107", "sess-1"));
+    void onlyProvenPreExecutionFailureCanReleaseClaim() {
+        issue();
+        assertThrows(CardStateConflictException.class,
+                () -> registry.complete("act-1", CardSubmitResult.ok("T-1", "ok")));
+        registry.claim("act-1", "session-A");
+        registry.fail("act-1", "执行前校验失败，尚未调用执行器", true);
+        assertEquals(CardState.ISSUED, registry.getRecord("act-1").orElseThrow().getState());
+        assertDoesNotThrow(() -> registry.claim("act-1", "session-A"));
     }
 }

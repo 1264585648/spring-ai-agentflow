@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { InteractiveCardData } from '../types/chat';
+import { CardSubmissionError } from '../api/sseClient';
 import { FileCheck, Send, CheckCircle2, AlertCircle } from 'lucide-react';
 
 interface InteractiveCardProps {
@@ -25,8 +26,9 @@ export const InteractiveCard: React.FC<InteractiveCardProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [successId, setSuccessId] = useState<string | undefined>(ticketId);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [retryBlocked, setRetryBlocked] = useState(false);
 
-  const isLocked = submitted || !!successId;
+  const isLocked = submitted || !!successId || retryBlocked;
 
   const handleFieldChange = (fieldKey: string, val: any) => {
     if (isLocked) return;
@@ -53,8 +55,9 @@ export const InteractiveCard: React.FC<InteractiveCardProps> = ({
       if (id) {
         setSuccessId(id);
       }
-    } catch (err: any) {
-      setErrorMsg(err.message || '方案提交处理失败，请稍后重试');
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : '提交状态未确认，请先核查动作状态');
+      setRetryBlocked(!(err instanceof CardSubmissionError) || !err.retryable);
     } finally {
       setLoading(false);
     }
@@ -146,12 +149,7 @@ export const InteractiveCard: React.FC<InteractiveCardProps> = ({
                 disabled={!field.editable || isLocked}
                 value={formData[field.fieldKey] ?? ''}
                 placeholder={field.placeholder}
-                onChange={(e) =>
-                  handleFieldChange(
-                    field.fieldKey,
-                    field.type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value
-                  )
-                }
+                onChange={(e) => handleFieldChange(field.fieldKey, e.target.value)}
                 style={{
                   padding: '7px 10px',
                   borderRadius: '6px',
@@ -187,7 +185,7 @@ export const InteractiveCard: React.FC<InteractiveCardProps> = ({
           </div>
         ) : (
           <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-            请核验方案参数，确认后将调用后台处理器
+            {retryBlocked ? '已停止再次提交，请先核查动作状态' : '请核验方案参数，确认后将调用后台处理器'}
           </div>
         )}
 
