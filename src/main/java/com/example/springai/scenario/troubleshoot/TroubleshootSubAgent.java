@@ -10,7 +10,6 @@ import com.example.springai.capability.log.model.LogQueryCriteria;
 import com.example.springai.capability.log.model.LogQueryResult;
 import com.example.springai.capability.log.port.LogQueryPort;
 import com.example.springai.capability.log.tool.LogQueryTool;
-import com.example.springai.capability.ops.tool.OpsActionTool;
 import com.example.springai.core.agent.SubAgent;
 import com.example.springai.core.card.model.InteractiveCard;
 import com.example.springai.core.context.AgentContext;
@@ -31,7 +30,7 @@ import java.util.Map;
  * 智能运维排障场景协同 SubAgent 插件 (TroubleshootSubAgent)
  * 职责:
  * 1. 作为业务场景插件实现 SubAgent SPI，承接排障多专家协同；
- * 2. 自由编排 log, database, ops 等一级正交原子能力工具；
+ * 2. 向模型提供 log、database 查询工具；运维写动作不通过模型工具执行；
  * 3. 负责故障专家研判、流式分析输出、应急止血卡片装配与延伸追问生成。
  */
 @Component("troubleshootSubAgent")
@@ -47,7 +46,6 @@ public class TroubleshootSubAgent implements SubAgent {
     private final DatabaseDiagnosePort databaseDiagnosePort;
     private final LogQueryTool logQueryTool;
     private final DatabaseDiagnoseTool databaseDiagnoseTool;
-    private final OpsActionTool opsActionTool;
     private final TroubleshootCardFactory cardFactory;
 
     @Override
@@ -87,8 +85,9 @@ public class TroubleshootSubAgent implements SubAgent {
         // 2. 驱动大模型推理与工具调用（Spring AI 原生 .stream() 响应式真流式），异常时平滑降级
         boolean clientActive = true;
         try {
+            // 仅挂载查询工具。写能力保留在后端，不能绕过人工确认通过模型调用。
             ChatClient agentClient = chatClientFactory.createClient(targetAgentCode,
-                    logQueryTool, databaseDiagnoseTool, opsActionTool);
+                    logQueryTool, databaseDiagnoseTool);
             if (agentClient == null) {
                 throw new IllegalStateException("ChatClient 未能正确初始化");
             }

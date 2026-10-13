@@ -6,8 +6,6 @@ import com.example.springai.capability.database.tool.DatabaseDiagnoseTool;
 import com.example.springai.capability.log.mock.MockLogAdapter;
 import com.example.springai.capability.log.port.LogQueryPort;
 import com.example.springai.capability.log.tool.LogQueryTool;
-import com.example.springai.capability.ops.mock.MockOpsActionAdapter;
-import com.example.springai.capability.ops.tool.OpsActionTool;
 import com.example.springai.core.agent.GeneralChatAgent;
 import com.example.springai.core.card.model.InteractiveCard;
 import com.example.springai.core.routing.IntentMatchResult;
@@ -44,7 +42,6 @@ class AgentPipelineServiceImplTest {
     private DatabaseDiagnosePort databaseDiagnosePort;
     private LogQueryTool logQueryTool;
     private DatabaseDiagnoseTool databaseDiagnoseTool;
-    private OpsActionTool opsActionTool;
     private TroubleshootSubAgent troubleshootSubAgent;
     private GeneralChatAgent generalChatAgent;
     private Executor directExecutor;
@@ -70,7 +67,6 @@ class AgentPipelineServiceImplTest {
         databaseDiagnosePort = new MockDbAdapter();
         logQueryTool = new LogQueryTool(logQueryPort);
         databaseDiagnoseTool = new DatabaseDiagnoseTool(databaseDiagnosePort);
-        opsActionTool = new OpsActionTool(new MockOpsActionAdapter());
 
         troubleshootSubAgent = new TroubleshootSubAgent(
                 chatClientFactory,
@@ -78,7 +74,6 @@ class AgentPipelineServiceImplTest {
                 databaseDiagnosePort,
                 logQueryTool,
                 databaseDiagnoseTool,
-                opsActionTool,
                 new TroubleshootCardFactory()
         );
         generalChatAgent = new GeneralChatAgent(chatClientFactory);

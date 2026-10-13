@@ -6,8 +6,6 @@ import com.example.springai.capability.database.tool.DatabaseDiagnoseTool;
 import com.example.springai.capability.log.mock.MockLogAdapter;
 import com.example.springai.capability.log.port.LogQueryPort;
 import com.example.springai.capability.log.tool.LogQueryTool;
-import com.example.springai.capability.ops.mock.MockOpsActionAdapter;
-import com.example.springai.capability.ops.tool.OpsActionTool;
 import com.example.springai.core.agent.AgentPromptRegistry;
 import com.example.springai.core.agent.GeneralChatAgent;
 import com.example.springai.core.card.CardRegistry;
@@ -83,7 +81,6 @@ class MultiTurnPipelineIntegrationTest {
                 dbPort,
                 new LogQueryTool(logPort),
                 new DatabaseDiagnoseTool(dbPort),
-                new OpsActionTool(new MockOpsActionAdapter()),
                 new TroubleshootCardFactory()
         );
         generalChatAgent = new GeneralChatAgent(chatClientFactory);

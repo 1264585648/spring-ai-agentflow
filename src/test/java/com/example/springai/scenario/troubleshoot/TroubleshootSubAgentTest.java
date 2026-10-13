@@ -4,8 +4,6 @@ import com.example.springai.capability.database.mock.MockDbAdapter;
 import com.example.springai.capability.database.tool.DatabaseDiagnoseTool;
 import com.example.springai.capability.log.mock.MockLogAdapter;
 import com.example.springai.capability.log.tool.LogQueryTool;
-import com.example.springai.capability.ops.mock.MockOpsActionAdapter;
-import com.example.springai.capability.ops.tool.OpsActionTool;
 import com.example.springai.core.card.model.InteractiveCard;
 import com.example.springai.core.context.AgentContext;
 import com.example.springai.core.event.AgentEventSink;
@@ -33,7 +31,6 @@ class TroubleshootSubAgentTest {
         AgentChatClientFactory chatClientFactory = mock(AgentChatClientFactory.class);
         MockLogAdapter logAdapter = new MockLogAdapter();
         MockDbAdapter dbAdapter = new MockDbAdapter();
-        MockOpsActionAdapter opsAdapter = new MockOpsActionAdapter();
 
         troubleshootSubAgent = new TroubleshootSubAgent(
                 chatClientFactory,
@@ -41,7 +38,6 @@ class TroubleshootSubAgentTest {
                 dbAdapter,
                 new LogQueryTool(logAdapter),
                 new DatabaseDiagnoseTool(dbAdapter),
-                new OpsActionTool(opsAdapter),
                 new TroubleshootCardFactory()
         );
 
@@ -106,7 +102,7 @@ class TroubleshootSubAgentTest {
         org.springframework.ai.chat.client.ChatClient.StreamResponseSpec mockStreamSpec = mock(org.springframework.ai.chat.client.ChatClient.StreamResponseSpec.class);
 
         AgentChatClientFactory factory = mock(AgentChatClientFactory.class);
-        when(factory.createClient(anyString(), any(), any(), any())).thenReturn(mockClient);
+        when(factory.createClient(anyString(), any(), any())).thenReturn(mockClient);
         when(mockClient.prompt()).thenReturn(mockSpec);
         when(mockSpec.user(anyString())).thenReturn(mockSpec);
         when(mockSpec.stream()).thenReturn(mockStreamSpec);
@@ -118,7 +114,6 @@ class TroubleshootSubAgentTest {
                 new MockDbAdapter(),
                 new LogQueryTool(new MockLogAdapter()),
                 new DatabaseDiagnoseTool(new MockDbAdapter()),
-                new OpsActionTool(new MockOpsActionAdapter()),
                 new TroubleshootCardFactory()
         );
 
@@ -154,7 +149,7 @@ class TroubleshootSubAgentTest {
         org.springframework.ai.chat.client.ChatClient.StreamResponseSpec mockStreamSpec = mock(org.springframework.ai.chat.client.ChatClient.StreamResponseSpec.class);
 
         AgentChatClientFactory factory = mock(AgentChatClientFactory.class);
-        when(factory.createClient(anyString(), any(), any(), any())).thenReturn(mockClient);
+        when(factory.createClient(anyString(), any(), any())).thenReturn(mockClient);
         when(mockClient.prompt()).thenReturn(mockSpec);
         when(mockSpec.user(anyString())).thenReturn(mockSpec);
         when(mockSpec.stream()).thenReturn(mockStreamSpec);
@@ -171,7 +166,6 @@ class TroubleshootSubAgentTest {
                 new MockDbAdapter(),
                 new LogQueryTool(new MockLogAdapter()),
                 new DatabaseDiagnoseTool(new MockDbAdapter()),
-                new OpsActionTool(new MockOpsActionAdapter()),
                 new TroubleshootCardFactory()
         );
 
