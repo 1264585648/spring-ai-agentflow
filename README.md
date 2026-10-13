@@ -68,6 +68,7 @@
 * 📑 **[06-息流FlowUs-MCP集成指南](./docs/06-息流FlowUs-MCP集成指南.md)** *(MCP 网关集成)*
 * 📚 **[企业级 Multi-Agent 实战专栏与避坑手册](./docs/handbook/README.md)** *(AI Agent 专栏与避坑笔记)*
 * ☕ **[Java 高并发与工程底座避坑手册](./docs/java-engineering/README.md)** *(Java 专栏: 线程池隔离、高并发与性能治理)*
+* 🧠 **[大模型底层原理与核心概念硬核拆解](./docs/ai-fundamentals/README.md)** *(AI 基础专栏: Transformer、QKV 注意力、KV Cache 与前沿架构)*
 
 ---
 

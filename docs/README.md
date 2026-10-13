@@ -88,3 +88,14 @@
   *高并发读写与分布式*：`AtomicReference` 无锁只读快照（<1ms）、`synchronized` 单 Pod 防抖、Apollo 分布式长轮询广播与本地磁盘容灾。
 
 👉 **[查看 Java 专栏索引与避坑箴言](./java-engineering/README.md)**
+
+---
+
+## 🧠 五、 大模型底层原理与核心概念硬核拆解 (`docs/ai-fundamentals/`)
+
+面向资深研发与架构师的无痛、透彻、硬核 AI 底层原理专栏：
+
+* 🔬 **[01-深入浅出Transformer核心：一文吃透QKV注意力机制与KV-Cache底层数学逻辑](./ai-fundamentals/01-深入浅出Transformer核心：一文吃透QKV注意力机制与KV-Cache底层数学逻辑.md)**  
+  *数学推导与显存本质*：从“图书检索”隐喻到缩放点积数学推导，详解为什么拆分 Q/K/V、自回归逐字生成中 Q 为什么不缓存、云厂商 PagedAttention 虚拟分页原理，以及从 MHA、GQA 到 DeepSeek MLA 的显存瘦身演进史。
+
+👉 **[查看 AI 核心原理专栏索引](./ai-fundamentals/README.md)**
