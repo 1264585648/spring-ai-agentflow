@@ -11,6 +11,7 @@ import com.example.springai.core.event.AgentEventSink;
 import com.example.springai.core.routing.L2VectorRegistry;
 import com.example.springai.core.routing.dto.DispatchStep;
 import com.example.springai.core.routing.impl.L2VectorResolver;
+import com.example.springai.core.routing.vector.VectorCandidate;
 import com.example.springai.core.routing.vector.VectorEmbeddingService;
 import com.example.springai.infra.client.AgentChatClientFactory;
 import com.example.springai.scenario.troubleshoot.TroubleshootCardFactory;
@@ -39,10 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
-/**
- * 从模型及端口实际收到的参数断言行为，而不是依赖混合匹配器的验证表达式。
- * 保留工具隔离、模型选项、真实容器注入和异常时不出卡检查。
- */
+/** 实际模型参数与容器装配回归；L2 使用有类型的记录替身，避免 Mockito 泛型推断依赖。 */
 @Timeout(15)
 class SecurityAndWiringVerificationTest {
     private final List<Prompt> modelRequests = new ArrayList<>();
@@ -57,14 +55,10 @@ class SecurityAndWiringVerificationTest {
         var defaults = ToolCallingChatOptions.builder().build();
         ChatModel model = mock(ChatModel.class, invocation -> {
             String method = invocation.getMethod().getName();
-            if (method.equals("getOptions") || method.equals("getDefaultOptions")) {
-                return defaults;
-            }
+            if (method.equals("getOptions") || method.equals("getDefaultOptions")) return defaults;
             if (method.equals("stream")) {
                 modelRequests.add((Prompt) invocation.getArguments()[0]);
-                if (modelUnavailable.get()) {
-                    return Flux.error(new IllegalStateException("LLM unavailable"));
-                }
+                if (modelUnavailable.get()) return Flux.error(new IllegalStateException("LLM unavailable"));
                 return Flux.just(new ChatResponse(List.of(new Generation(new AssistantMessage("诊断完成")))));
             }
             return Answers.RETURNS_DEFAULTS.answer(invocation);
@@ -88,11 +82,9 @@ class SecurityAndWiringVerificationTest {
         var logOptions = executeAndObserve("LOG_DIAGNOSE_AGENT", "日志");
         assertEquals(List.of("queryServiceLogs"), logOptions.getToolCallbacks().stream()
                 .map(tool -> tool.getToolDefinition().name()).toList());
-
         var databaseOptions = executeAndObserve("DB_DIAGNOSE_AGENT", "数据库");
         assertEquals(List.of("diagnoseDatabase"), databaseOptions.getToolCallbacks().stream()
                 .map(tool -> tool.getToolDefinition().name()).toList());
-
         var definition = registry.getAgent("LOG_DIAGNOSE_AGENT").orElseThrow();
         definition.setModelName("qwen-max");
         definition.setTemperature(0.45);
@@ -100,9 +92,7 @@ class SecurityAndWiringVerificationTest {
         var updatedOptions = executeAndObserve("LOG_DIAGNOSE_AGENT", "再次查询");
         assertEquals("qwen-max", updatedOptions.getModel());
         assertNotNull(updatedOptions.getTemperature());
-        assertTrue(Math.abs(updatedOptions.getTemperature().doubleValue() - 0.45d) < 0.001d,
-                "模型请求必须使用更新后的 temperature");
-
+        assertTrue(Math.abs(updatedOptions.getTemperature().doubleValue() - 0.45d) < 0.001d);
         definition.setAttachedTools("[\"opsActionTool\"]");
         registry.registerOrUpdate(definition);
         int before = modelRequests.size();
@@ -112,39 +102,46 @@ class SecurityAndWiringVerificationTest {
 
     @Test
     void l2UsesContainerDependencies() {
-        List<String> embeddingRequests = new ArrayList<>();
-        AtomicInteger searches = new AtomicInteger();
-        VectorEmbeddingService embedding = mock(VectorEmbeddingService.class, invocation -> {
-            if (invocation.getMethod().getName().equals("embed")) {
-                embeddingRequests.add((String) invocation.getArguments()[0]);
-                return new float[]{1, 0};
-            }
-            if (invocation.getMethod().getName().equals("modelName")) return "test-model";
-            return Answers.RETURNS_DEFAULTS.answer(invocation);
-        });
-        L2VectorRegistry vectors = mock(L2VectorRegistry.class, invocation -> {
-            if (invocation.getMethod().getName().equals("getActiveCount")) return 1;
-            if (invocation.getMethod().getName().equals("searchTop1")) {
-                Object[] arguments = invocation.getArguments();
-                assertEquals(3, arguments.length, "检索必须携带模型空间标识");
-                assertArrayEquals(new float[]{1, 0}, (float[]) arguments[0]);
-                double actualThreshold = ((Number) arguments[1]).doubleValue();
-                assertTrue(Math.abs(actualThreshold - 0.70d) < 0.001d, "检索必须使用预期门槛");
-                assertEquals("test-model", (String) arguments[2]);
-                searches.incrementAndGet();
-                return Optional.empty();
-            }
-            return Answers.RETURNS_DEFAULTS.answer(invocation);
-        });
-        try (var context = new AnnotationConfigApplicationContext()) {
+        RecordingEmbedding embedding = new RecordingEmbedding();
+        RecordingVectorRegistry vectors = new RecordingVectorRegistry();
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
             context.registerBean(L2VectorRegistry.class, () -> vectors);
             context.registerBean(VectorEmbeddingService.class, () -> embedding);
             context.register(L2VectorResolver.class);
             context.refresh();
-            assertTrue(context.getBean(L2VectorResolver.class)
-                    .resolve(AgentContext.builder().query("查询知识").build()).isEmpty());
-            assertEquals(List.of("查询知识"), embeddingRequests);
-            assertEquals(1, searches.get());
+            Optional<?> resolution = context.getBean(L2VectorResolver.class)
+                    .resolve(AgentContext.builder().query("查询知识").build());
+            assertTrue(resolution.isEmpty());
+            assertEquals(List.of("查询知识"), embedding.requests);
+            assertEquals(1, vectors.searches);
+            assertArrayEquals(new float[]{1, 0}, vectors.query);
+            assertTrue(Math.abs(vectors.threshold - 0.70d) < 0.001d);
+            assertEquals("test-model", vectors.model);
+        }
+    }
+
+    private static final class RecordingEmbedding implements VectorEmbeddingService {
+        final List<String> requests = new ArrayList<>();
+        @Override public float[] embed(String text) { requests.add(text); return new float[]{1, 0}; }
+        @Override public int dimensions() { return 2; }
+        @Override public String modelName() { return "test-model"; }
+    }
+
+    private static final class RecordingVectorRegistry extends L2VectorRegistry {
+        int searches;
+        float[] query;
+        double threshold;
+        String model;
+        RecordingVectorRegistry() { super(null, Runnable::run); }
+        // 容器生命周期不访问真实数据库；测试仍由容器创建并装配 L2VectorResolver。
+        @Override public void init() { }
+        @Override public int getActiveCount() { return 1; }
+        @Override public Optional<VectorCandidate> searchTop1(float[] vector, double minimum, String expectedModel) {
+            searches++;
+            query = vector.clone();
+            threshold = minimum;
+            model = expectedModel;
+            return Optional.empty();
         }
     }
 
@@ -165,8 +162,7 @@ class SecurityAndWiringVerificationTest {
             assertEquals(0, issuedCards.get());
         }
         modelUnavailable.set(true);
-        StepResult failed = agent.executeStep(
-                AgentContext.builder().query("payment-service 504").sink(sink).build(), step);
+        StepResult failed = agent.executeStep(AgentContext.builder().query("payment-service 504").sink(sink).build(), step);
         assertEquals(StepResult.Status.FAILED, failed.getStatus());
         assertEquals(0, issuedCards.get(), "模型失败不能签发可执行卡片");
     }
