@@ -5,42 +5,17 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * 智能运维排障与应急处置入参模型 (OpsActionParam)
- */
+/** 运维执行参数，必须完整承载已批准的目标、容量、原因和实际操作人。 */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class OpsActionParam {
-
-    /**
-     * 目标微服务标识 (如 order-service)
-     */
     private String service;
-
-    /**
-     * 处置动作类型 (如 KILL_SLOW_SESSION, EXPAND_POOL_LIMIT, RESTART_POD)
-     */
     private String actionType;
-
-    /**
-     * 目标标识: 慢查会话 ID (如 trx_10423) 或新连接池容量 (如 80)
-     */
     private String targetIdentifier;
-
-    /**
-     * 处置原因与研判依据说明
-     */
     private String reason;
-
-    /**
-     * 操作工程师标识 (必填审计字段)
-     */
     private String operator;
-
-    /**
-     * 幂等执行键 (绑定卡片 actionId，防止重试或超时导致重复执行外部副作用)
-     */
     private String idempotencyKey;
+    private Integer maxPoolSize;
 }

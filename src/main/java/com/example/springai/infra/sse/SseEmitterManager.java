@@ -1,155 +1,84 @@
 package com.example.springai.infra.sse;
 
-import lombok.extern.slf4j.Slf4j;
+import com.example.springai.core.event.SessionDisconnectedEvent;
 import com.example.springai.core.event.SsePacket;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.io.IOException;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
-/**
- * SSE Emitter 连接管理器。
- * 连接按会话保持，done/error 只结束当前回合，不关闭长连接。
- */
+/** 会话连接表。替换连接不会让旧回调删掉新连接；done/error 不关闭长连接。 */
 @Component
 @Slf4j
 public class SseEmitterManager {
-
-
-    /**
-     * 0 表示容器不为这条异步请求设置超时，空闲保活交给心跳。
-     */
-    private static final Long NO_TIMEOUT = 0L;
-
-    private static final long HEARTBEAT_INTERVAL_SECONDS = 15L;
-
-    private final Map<String, SseEmitter> emitterMap = new ConcurrentHashMap<>();
-
-    private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "sse-heartbeat");
-        thread.setDaemon(true);
-        return thread;
+    private final Map<String, SseEmitter> emitters = new ConcurrentHashMap<>();
+    private final ApplicationEventPublisher events;
+    private final ScheduledExecutorService heartbeat = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "sse-heartbeat"); t.setDaemon(true); return t;
     });
-
-    @PostConstruct
-    public void startHeartbeat() {
-        heartbeatExecutor.scheduleAtFixedRate(this::sendHeartbeat, HEARTBEAT_INTERVAL_SECONDS,
-                HEARTBEAT_INTERVAL_SECONDS, TimeUnit.SECONDS);
+    @Autowired
+    public SseEmitterManager(ApplicationEventPublisher events) { this.events = events; }
+    public SseEmitterManager() { this(null); }
+    @PostConstruct public void startHeartbeat() { heartbeat.scheduleAtFixedRate(this::ping, 15, 15, TimeUnit.SECONDS); }
+    @PreDestroy public void shutdownHeartbeat() {
+        heartbeat.shutdownNow();
+        emitters.keySet().forEach(this::complete);
     }
-
-    @PreDestroy
-    public void shutdownHeartbeat() {
-        heartbeatExecutor.shutdownNow();
-    }
-
-    /**
-     * 建立并注册 SSE 连接。先放入新连接，再关闭旧连接，避免旧回调删掉新连接。
-     */
     public SseEmitter createEmitter(String sessionId) {
-        SseEmitter emitter = new SseEmitter(NO_TIMEOUT);
-
-        emitter.onCompletion(() -> {
-            log.info("[SSE] 会话完成关闭, sessionId: {}", sessionId);
-            emitterMap.remove(sessionId, emitter);
-        });
-
-        emitter.onTimeout(() -> {
-            log.warn("[SSE] 会话连接超时, sessionId: {}", sessionId);
-            emitterMap.remove(sessionId, emitter);
-        });
-
-        emitter.onError((ex) -> {
-            log.error("[SSE] 会话发生异常断开, sessionId: {}, error: {}", sessionId, ex.getMessage());
-            emitterMap.remove(sessionId, emitter);
-        });
-
-        SseEmitter previous = emitterMap.put(sessionId, emitter);
-        if (previous != null) {
-            try {
-                previous.complete();
-            } catch (Exception ignored) {
-            }
-        }
-        log.info("[SSE] 建立新连接成功, sessionId: {}", sessionId);
+        if (sessionId == null || sessionId.isBlank() || sessionId.length() > 128) throw new IllegalArgumentException("无效 sessionId");
+        SseEmitter emitter = new SseEmitter(0L);
+        emitter.onCompletion(() -> detach(sessionId, emitter));
+        emitter.onTimeout(() -> detach(sessionId, emitter));
+        emitter.onError(ex -> detach(sessionId, emitter));
+        SseEmitter old = emitters.put(sessionId, emitter);
+        if (old != null) old.complete();
+        try {
+            // 立即刷新响应头，不等待第一次业务事件/15 秒心跳；不新增第九种业务事件。
+            emitter.send(SseEmitter.event().comment("connected"));
+        } catch (Exception ex) { detach(sessionId, emitter); }
         return emitter;
     }
-
-    /**
-     * 向指定会话安全推送事件包。同一连接上的发送互斥。
-     */
     public boolean send(String sessionId, SsePacket<?> packet) {
-        SseEmitter emitter = emitterMap.get(sessionId);
-        if (emitter == null) {
-            log.warn("[SSE] 未找到有效连接, 发送忽略, sessionId: {}, event: {}", sessionId, packet.getEvent());
-            return false;
-        }
-
+        SseEmitter emitter = emitters.get(sessionId);
+        if (emitter == null) return false;
         synchronized (emitter) {
-            if (emitterMap.get(sessionId) != emitter) {
-                return false;
-            }
+            if (emitters.get(sessionId) != emitter) return false;
             try {
-                SseEmitter.SseEventBuilder eventBuilder = SseEmitter.event()
-                        .name(packet.getEvent())
-                        .data(packet.getData(), MediaType.APPLICATION_JSON)
-                        .id(String.valueOf(packet.getTimestamp()));
-
-                emitter.send(eventBuilder);
+                emitter.send(SseEmitter.event().name(packet.getEvent()).data(packet.getData(), MediaType.APPLICATION_JSON)
+                        .id(packet.getEventId()));
                 return true;
-            } catch (IOException | IllegalStateException ex) {
-                log.error("[SSE] 发送消息异常，清理连接, sessionId: {}, error: {}", sessionId, ex.getMessage());
-                emitterMap.remove(sessionId, emitter);
+            } catch (Exception ex) {
+                log.debug("[SSE] 发送失败，关闭会话连接 sessionId={}", sessionId, ex);
+                detach(sessionId, emitter);
                 return false;
             }
         }
     }
-
-    /**
-     * 完成并移除连接。仅在客户端离开或服务端主动拆连接时使用。
-     */
+    public boolean isConnected(String sessionId) { return sessionId != null && emitters.containsKey(sessionId); }
     public void complete(String sessionId) {
-        SseEmitter emitter = emitterMap.remove(sessionId);
+        SseEmitter emitter = emitters.get(sessionId);
         if (emitter != null) {
-            try {
-                emitter.complete();
-            } catch (Exception ignored) {
-            }
+            detach(sessionId, emitter);
+            try { emitter.complete(); } catch (RuntimeException ignored) { }
         }
     }
-
-    /**
-     * 移除连接
-     */
-    public void removeEmitter(String sessionId) {
-        complete(sessionId);
+    public void removeEmitter(String sessionId) { complete(sessionId); }
+    private void detach(String sessionId, SseEmitter expected) {
+        if (emitters.remove(sessionId, expected) && events != null) events.publishEvent(new SessionDisconnectedEvent(sessionId));
     }
-
-    public boolean isConnected(String sessionId) {
-        return emitterMap.containsKey(sessionId);
-    }
-
-    private void sendHeartbeat() {
-        for (Map.Entry<String, SseEmitter> entry : emitterMap.entrySet()) {
-            SseEmitter emitter = entry.getValue();
+    private void ping() {
+        emitters.forEach((sessionId, emitter) -> {
             synchronized (emitter) {
-                if (emitterMap.get(entry.getKey()) != emitter) {
-                    continue;
-                }
-                try {
-                    emitter.send(SseEmitter.event().comment("ping"));
-                } catch (Exception ex) {
-                    log.debug("[SSE] 心跳失败，清理连接, sessionId: {}", entry.getKey());
-                    emitterMap.remove(entry.getKey(), emitter);
-                }
+                if (emitters.get(sessionId) != emitter) return;
+                try { emitter.send(SseEmitter.event().comment("ping")); }
+                catch (Exception ex) { detach(sessionId, emitter); }
             }
-        }
+        });
     }
 }

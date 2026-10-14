@@ -1,31 +1,21 @@
 package com.example.springai.core.event;
 
-import com.example.springai.core.event.SseEventType;
-import lombok.AllArgsConstructor;
 import lombok.Data;
+import java.util.UUID;
 
-/**
- * SSE 统一数据包包装类
- */
+/** 时间戳仅用于观测；eventId 在数据包创建时生成，重发同一个包保留同一 ID。 */
 @Data
-@AllArgsConstructor
 public class SsePacket<T> {
-
     private String event;
     private T data;
     private long timestamp;
-
-    public SsePacket() {
-        this.timestamp = System.currentTimeMillis();
+    private final String eventId = UUID.randomUUID().toString();
+    public SsePacket() { timestamp = System.currentTimeMillis(); }
+    public SsePacket(String event, T data, long timestamp) {
+        this.event = event; this.data = data; this.timestamp = timestamp;
     }
-
     public SsePacket(SseEventType eventType, T data) {
-        this.event = eventType.getValue();
-        this.data = data;
-        this.timestamp = System.currentTimeMillis();
+        this(eventType.getValue(), data, System.currentTimeMillis());
     }
-
-    public static <T> SsePacket<T> of(SseEventType eventType, T data) {
-        return new SsePacket<>(eventType, data);
-    }
+    public static <T> SsePacket<T> of(SseEventType type, T data) { return new SsePacket<>(type, data); }
 }
