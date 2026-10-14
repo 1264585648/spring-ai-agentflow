@@ -41,7 +41,7 @@ import static org.mockito.Mockito.mock;
 
 /**
  * 从模型及端口实际收到的参数断言行为，而不是依赖混合匹配器的验证表达式。
- * 不删除安全断言：保留工具隔离、模型选项、真实容器注入和异常时不出卡检查。
+ * 保留工具隔离、模型选项、真实容器注入和异常时不出卡检查。
  */
 @Timeout(15)
 class SecurityAndWiringVerificationTest {
@@ -61,7 +61,7 @@ class SecurityAndWiringVerificationTest {
                 return defaults;
             }
             if (method.equals("stream")) {
-                modelRequests.add(invocation.getArgument(0, Prompt.class));
+                modelRequests.add((Prompt) invocation.getArguments()[0]);
                 if (modelUnavailable.get()) {
                     return Flux.error(new IllegalStateException("LLM unavailable"));
                 }
@@ -99,7 +99,9 @@ class SecurityAndWiringVerificationTest {
         registry.registerOrUpdate(definition);
         var updatedOptions = executeAndObserve("LOG_DIAGNOSE_AGENT", "再次查询");
         assertEquals("qwen-max", updatedOptions.getModel());
-        assertEquals(0.45, updatedOptions.getTemperature(), 0.001);
+        assertNotNull(updatedOptions.getTemperature());
+        assertTrue(Math.abs(updatedOptions.getTemperature().doubleValue() - 0.45d) < 0.001d,
+                "模型请求必须使用更新后的 temperature");
 
         definition.setAttachedTools("[\"opsActionTool\"]");
         registry.registerOrUpdate(definition);
@@ -114,7 +116,7 @@ class SecurityAndWiringVerificationTest {
         AtomicInteger searches = new AtomicInteger();
         VectorEmbeddingService embedding = mock(VectorEmbeddingService.class, invocation -> {
             if (invocation.getMethod().getName().equals("embed")) {
-                embeddingRequests.add(invocation.getArgument(0, String.class));
+                embeddingRequests.add((String) invocation.getArguments()[0]);
                 return new float[]{1, 0};
             }
             if (invocation.getMethod().getName().equals("modelName")) return "test-model";
@@ -123,10 +125,12 @@ class SecurityAndWiringVerificationTest {
         L2VectorRegistry vectors = mock(L2VectorRegistry.class, invocation -> {
             if (invocation.getMethod().getName().equals("getActiveCount")) return 1;
             if (invocation.getMethod().getName().equals("searchTop1")) {
-                assertEquals(3, invocation.getArguments().length, "检索必须携带模型空间标识");
-                assertArrayEquals(new float[]{1, 0}, invocation.getArgument(0, float[].class));
-                assertEquals(0.70, ((Number) invocation.getArgument(1)).doubleValue(), 0.001);
-                assertEquals("test-model", invocation.getArgument(2, String.class));
+                Object[] arguments = invocation.getArguments();
+                assertEquals(3, arguments.length, "检索必须携带模型空间标识");
+                assertArrayEquals(new float[]{1, 0}, (float[]) arguments[0]);
+                double actualThreshold = ((Number) arguments[1]).doubleValue();
+                assertTrue(Math.abs(actualThreshold - 0.70d) < 0.001d, "检索必须使用预期门槛");
+                assertEquals("test-model", (String) arguments[2]);
                 searches.incrementAndGet();
                 return Optional.empty();
             }
