@@ -26,6 +26,6 @@ public class MockLogAdapter implements LogQueryPort {
         return LogQueryResult.builder().service(service).totalMatches(142).matchedEntries(List.of(first,second))
                 .topExceptions(List.of("HikariPool-1 - Connection is not available, request timed out after 30000ms (118 occurrences)",
                         "org.springframework.dao.QueryTimeoutException: HikariPool wait timeout (24 occurrences)"))
-                .deepestStackTrace("com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:182)").build();
+                .deepestStackTrace("com.zaxxer.hikari.pool.HikariPool.getConnection (HikariPool.java:182)").build();
     }
 }
