@@ -63,6 +63,53 @@ public class AgentContext {
     private java.util.List<com.example.springai.core.memory.ConversationMessage> history = new java.util.ArrayList<>();
 
     /**
+     * 复合编排计划中已完成步骤的结构化结果列表
+     */
+    @Builder.Default
+    private java.util.List<StepResult> stepResults = new java.util.ArrayList<>();
+
+    /**
+     * 当前调度计划总步骤数 (默认 1)
+     */
+    @Builder.Default
+    private int totalSteps = 1;
+
+    /**
+     * 回合取消信号 (客户端断连、主动取消或前置步骤致命失败时置为 true)
+     */
+    @Builder.Default
+    private volatile boolean cancelled = false;
+
+    /**
+     * 当前回合执行截止时间戳 (毫秒，0 表示未限制)
+     */
+    @Builder.Default
+    private long deadlineMillis = 0L;
+
+    public AgentContext(
+            String sessionId,
+            String turnId,
+            String userId,
+            String query,
+            String effectiveQuery,
+            Map<String, Object> attributes,
+            AgentEventSink sink,
+            java.util.List<com.example.springai.core.memory.ConversationMessage> history) {
+        this.sessionId = sessionId;
+        this.turnId = turnId;
+        this.userId = userId;
+        this.query = query;
+        this.effectiveQuery = effectiveQuery;
+        this.attributes = attributes != null ? attributes : new HashMap<>();
+        this.sink = sink;
+        this.history = history != null ? history : new java.util.ArrayList<>();
+        this.stepResults = new java.util.ArrayList<>();
+        this.totalSteps = 1;
+        this.cancelled = false;
+        this.deadlineMillis = 0L;
+    }
+
+    /**
      * 存取属性便捷方法
      */
     public void setAttribute(String key, Object value) {
@@ -74,5 +121,35 @@ public class AgentContext {
 
     public Object getAttribute(String key) {
         return this.attributes != null ? this.attributes.get(key) : null;
+    }
+
+    public void addStepResult(StepResult result) {
+        if (result == null) {
+            return;
+        }
+        if (this.stepResults == null) {
+            this.stepResults = new java.util.ArrayList<>();
+        }
+        this.stepResults.add(result);
+    }
+
+    public void cancel() {
+        this.cancelled = true;
+    }
+
+    public boolean isExpired(long nowMillis) {
+        return deadlineMillis > 0 && nowMillis > deadlineMillis;
+    }
+
+    public boolean isCancelledOrExpired(long nowMillis) {
+        return cancelled || isExpired(nowMillis);
+    }
+
+    public boolean hasFailedStep() {
+        if (this.stepResults == null || this.stepResults.isEmpty()) {
+            return false;
+        }
+        return this.stepResults.stream()
+                .anyMatch(r -> r != null && r.getStatus() == StepResult.Status.FAILED);
     }
 }

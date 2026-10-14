@@ -1,187 +1,76 @@
 package com.example.springai.web.controller;
 
-import com.example.springai.capability.ops.card.OpsActionCardSubmitHandler;
 import com.example.springai.core.card.CardSubmitHandler;
-import com.example.springai.core.card.dto.CardSubmitRequest;
-import com.example.springai.core.card.dto.CardSubmitResult;
+import com.example.springai.core.card.action.*;
+import com.example.springai.core.card.dto.*;
 import com.example.springai.core.card.impl.InMemoryCardRegistry;
-import com.example.springai.core.card.model.CardFormField;
-import com.example.springai.core.card.model.InteractiveCard;
+import com.example.springai.core.card.model.*;
+import com.example.springai.core.card.state.CardState;
 import com.example.springai.infra.sse.SseEventPublisher;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.ResponseEntity;
-
-import java.util.List;
-import java.util.Map;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class CardInteractionControllerTest {
-
-    private InMemoryCardRegistry cardRegistry;
-    private SseEventPublisher ssePublisher;
-
-    @BeforeEach
-    void setUp() {
-        cardRegistry = new InMemoryCardRegistry();
-        ssePublisher = mock(SseEventPublisher.class);
+    private final InMemoryCardRegistry registry = new InMemoryCardRegistry();
+    private final SseEventPublisher publisher = mock(SseEventPublisher.class);
+    private final AtomicInteger calls = new AtomicInteger();
+    private CardSubmitRequest issue() {
+        var card = new InteractiveCard(); card.setActionId("a"); card.setTurnId("old-turn"); card.setCardType("TEST");
+        card.setFields(List.of(new CardFormField("target","目标","text","resource-A",false,true)));
+        registry.issue("s",card); return new CardSubmitRequest("a","s","TEST",Map.of());
     }
-
-    private InteractiveCard buildSampleCard(String actionId) {
-        InteractiveCard card = new InteractiveCard();
-        card.setActionId(actionId);
-        card.setCardType("TROUBLESHOOT_ACTION");
-        card.setTitle("🚨 应急止血预案确认");
-
-        CardFormField serviceField = new CardFormField("service", "服务名", "text", "order-service", false, true);
-        CardFormField actionField = new CardFormField("action_type", "处置动作", "text", "Kill阻塞慢查询并临时扩容连接池", true, true);
-
-        card.setFields(List.of(serviceField, actionField));
-        return card;
-    }
-
-    @Test
-    @DisplayName("测试重复提交返回 409 且失败释放后允许重试")
-    void duplicateSubmitReturns409AndFailureReleasesTheKey() {
-        // 先在注册中心签发该卡片
-        InteractiveCard card = buildSampleCard("act-1");
-        cardRegistry.issue("sess-1", card);
-
-        AtomicInteger attempts = new AtomicInteger();
-        CardSubmitHandler handler = new CardSubmitHandler() {
-            @Override
-            public boolean supports(String cardType) {
-                return "TROUBLESHOOT_ACTION".equals(cardType);
-            }
-
-            @Override
-            public CardSubmitResult handleSubmit(CardSubmitRequest request) {
-                if (attempts.getAndIncrement() == 0) {
-                    throw new IllegalStateException("boom");
-                }
-                return CardSubmitResult.ok("T-1", "ok");
+    private CardSubmitHandler handler(boolean mock, boolean fail) {
+        return new CardSubmitHandler() {
+            public boolean supports(String type) { return "TEST".equals(type); }
+            public boolean isSimulation() { return mock; }
+            public CardSubmitResult handleSubmit(ApprovedCardSubmission approved) {
+                calls.incrementAndGet(); if (fail) throw new IllegalStateException("write succeeded, response lost");
+                return CardSubmitResult.ok("T-1",approved.getActorId());
             }
         };
-
-        CardInteractionController controller = new CardInteractionController(
-                List.of(handler), ssePublisher, cardRegistry);
-
-        CardSubmitRequest request = new CardSubmitRequest();
-        request.setActionId("act-1");
-        request.setSessionId("sess-1");
-        request.setCardType("TROUBLESHOOT_ACTION");
-        request.setFormValues(Map.of(
-                "service", "order-service",
-                "action_type", "Kill阻塞慢查询并临时扩容连接池"
-        ));
-
-        // 第一次提交：Handler 内部抛出异常 -> 500，状态释放回 ISSUED 允许重试
-        ResponseEntity<Map<String, Object>> failed = controller.submitCard(request);
-        assertEquals(500, failed.getStatusCode().value());
-
-        // 第二次提交（重试）：成功 -> 200，状态流转至 SUBMITTED 终态
-        ResponseEntity<Map<String, Object>> retried = controller.submitCard(request);
-        assertEquals(200, retried.getStatusCode().value());
-        assertEquals("T-1", retried.getBody().get("ticketId"));
-
-        // 第三次提交：终态下重复提交 -> 409 Conflict
-        ResponseEntity<Map<String, Object>> duplicate = controller.submitCard(request);
-        assertEquals(409, duplicate.getStatusCode().value());
-        assertEquals(409, duplicate.getBody().get("code"));
     }
-
-    @Test
-    @DisplayName("测试排障应急卡片正常提交与工单生成")
-    void testTroubleshootCardSubmission() {
-        InteractiveCard card = buildSampleCard("act-ops-101");
-        cardRegistry.issue("sess-ops-1", card);
-
-        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler();
-        CardInteractionController controller = new CardInteractionController(
-                List.of(handler), ssePublisher, cardRegistry);
-
-        CardSubmitRequest request = new CardSubmitRequest();
-        request.setActionId("act-ops-101");
-        request.setSessionId("sess-ops-1");
-        request.setCardType("TROUBLESHOOT_ACTION");
-        request.setFormValues(Map.of(
-                "service", "order-service",
-                "action_type", "Kill阻塞慢查询并临时扩容连接池"
-        ));
-
-        ResponseEntity<Map<String, Object>> response = controller.submitCard(request);
-        assertEquals(200, response.getStatusCode().value());
-        assertNotNull(response.getBody().get("ticketId"));
-        assertTrue(String.valueOf(response.getBody().get("ticketId")).startsWith("OPS-"));
-        assertTrue(String.valueOf(response.getBody().get("message")).contains("order-service"));
+    private CardInteractionController controller(boolean fail) {
+        return new CardInteractionController(new ActionGate(registry,List.of(handler(true,fail)),ActionAuthorizer.DENY_ALL,true,false),publisher);
     }
-
-    @Test
-    @DisplayName("测试只读参数被恶意篡改拦截返回 400 安全警告")
-    void testTamperingReadOnlyFieldReturns400() {
-        InteractiveCard card = buildSampleCard("act-tamper-1");
-        cardRegistry.issue("sess-1", card);
-
-        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler();
-        CardInteractionController controller = new CardInteractionController(
-                List.of(handler), ssePublisher, cardRegistry);
-
-        // 恶意用户抓包将只读的 order-service 改为 payment-db
-        CardSubmitRequest request = new CardSubmitRequest();
-        request.setActionId("act-tamper-1");
-        request.setSessionId("sess-1");
-        request.setCardType("TROUBLESHOOT_ACTION");
-        request.setFormValues(Map.of(
-                "service", "payment-db",
-                "action_type", "Kill阻塞慢查询并临时扩容连接池"
-        ));
-
-        ResponseEntity<Map<String, Object>> response = controller.submitCard(request);
-        assertEquals(400, response.getStatusCode().value());
-        assertTrue(String.valueOf(response.getBody().get("message")).contains("安全警告"));
-        assertTrue(String.valueOf(response.getBody().get("message")).contains("只读参数"));
+    @Test void unknownResultIsNotRetryableAndNeverReexecutes() {
+        var request=issue(); var controller=controller(true); var failed=controller.submitCard(request,null);
+        assertEquals(500,failed.getStatusCode().value()); assertEquals(false,failed.getBody().get("retryable"));
+        assertEquals("EXECUTION_UNKNOWN",failed.getBody().get("errorType"));
+        assertEquals(CardState.EXECUTION_UNKNOWN,registry.getRecord("a").orElseThrow().getState());
+        assertEquals(409,controller.submitCard(request,null).getStatusCode().value()); assertEquals(1,calls.get());
     }
-
-    @Test
-    @DisplayName("测试伪造未下发的 actionId 提交被拒绝返回 400")
-    void testUnissuedActionIdReturns400() {
-        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler();
-        CardInteractionController controller = new CardInteractionController(
-                List.of(handler), ssePublisher, cardRegistry);
-
-        CardSubmitRequest request = new CardSubmitRequest();
-        request.setActionId("fake-action-id-999");
-        request.setSessionId("sess-1");
-        request.setCardType("TROUBLESHOOT_ACTION");
-
-        ResponseEntity<Map<String, Object>> response = controller.submitCard(request);
-        assertEquals(400, response.getStatusCode().value());
-        assertTrue(String.valueOf(response.getBody().get("message")).contains("不存在"));
+    @Test void receiptFailureDoesNotTurnConfirmedSuccessInto500() {
+        var request=issue();
+        when(publisher.sendCardReceipt(anyString(),anyString(),anyString(),anyString(),anyString())).thenThrow(new IllegalStateException("SSE closed"));
+        var result=controller(false).submitCard(request,null);
+        assertEquals(200,result.getStatusCode().value()); assertEquals("old-turn",result.getBody().get("turnId"));
+        assertEquals(CardState.SUBMITTED,registry.getRecord("a").orElseThrow().getState());
+        verify(publisher).sendCardReceipt(eq("s"),eq("old-turn"),eq("a"),eq("T-1"),anyString());
     }
-
-    @Test
-    @DisplayName("测试跨会话越权使用他人 actionId 被拦截返回 403 Forbidden")
-    void testCrossSessionSubmitReturns403() {
-        InteractiveCard card = buildSampleCard("act-user-A");
-        cardRegistry.issue("session-user-A", card);
-
-        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler();
-        CardInteractionController controller = new CardInteractionController(
-                List.of(handler), ssePublisher, cardRegistry);
-
-        // 用户 B 拿着用户 A 的 actionId 发起提交
-        CardSubmitRequest request = new CardSubmitRequest();
-        request.setActionId("act-user-A");
-        request.setSessionId("session-user-B");
-        request.setCardType("TROUBLESHOOT_ACTION");
-        request.setFormValues(Map.of("service", "order-service"));
-
-        ResponseEntity<Map<String, Object>> response = controller.submitCard(request);
-        assertEquals(403, response.getStatusCode().value());
-        assertTrue(String.valueOf(response.getBody().get("message")).contains("越权操作拦截"));
+    @Test void missingSessionForgedTypeAndReadOnlyTamperingDoNotExecute() {
+        var request=issue(); var controller=controller(false);
+        request.setSessionId(null); assertEquals(400,controller.submitCard(request,null).getStatusCode().value());
+        request.setSessionId("other"); assertEquals(403,controller.submitCard(request,null).getStatusCode().value());
+        request.setSessionId("s"); request.setCardType("OTHER"); assertEquals(403,controller.submitCard(request,null).getStatusCode().value());
+        request.setCardType("TEST"); request.setFormValues(Map.of("target","resource-B"));
+        assertEquals(403,controller.submitCard(request,null).getStatusCode().value());
+        request.setFormValues(Map.of("operator","admin")); assertEquals(403,controller.submitCard(request,null).getStatusCode().value());
+        assertEquals(0,calls.get()); assertEquals(CardState.ISSUED,registry.getRecord("a").orElseThrow().getState());
+    }
+    @Test void mvcPrincipalCannotBeReplacedByUserHeader() throws Exception {
+        issue(); var gate=new ActionGate(registry,List.of(handler(false,false)),(actor,p,v)->assertEquals("alice",actor),false,true);
+        var mvc=MockMvcBuilders.standaloneSetup(new CardInteractionController(gate,publisher)).build();
+        String json="{\"actionId\":\"a\",\"sessionId\":\"s\",\"cardType\":\"TEST\",\"formValues\":{}}";
+        mvc.perform(post("/api/v1/card/submit").contentType(MediaType.APPLICATION_JSON).header("X-User-Id","alice").content(json)).andExpect(status().isForbidden());
+        assertEquals(0,calls.get());
+        mvc.perform(post("/api/v1/card/submit").contentType(MediaType.APPLICATION_JSON).principal(()->"alice").header("X-User-Id","mallory").content(json)).andExpect(status().isOk());
+        assertEquals(1,calls.get());
     }
 }

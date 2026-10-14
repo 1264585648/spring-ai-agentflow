@@ -5,15 +5,13 @@ import com.example.springai.capability.ops.model.OpsActionResult;
 import com.example.springai.capability.ops.port.OpsActionPort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
 /**
- * 运维操作与应急处置原子工具 (OpsActionTool)
- * 职责:
- * 1. 作为一级正交原子能力提供 Spring AI 原生 @Tool 注解；
- * 2. 统一调度底层应急处置动作（终止慢查询、扩容连接池、服务重启、流量剔除等）；
- * 3. 产出规范化审计工单 (TicketId)，保障变更安全性。
+ * 运维操作与应急处置后端执行辅助类 (OpsActionTool)。
+ * 保留现有 Java 调用接口，但不再作为模型工具或 L1 直通工具暴露。
+ * 写执行方法不得添加 Spring AI 的工具注解；未来应由统一审批入口调用执行端口。
+ * 当前方法本身不提供鉴权或审批保障，不能将普通 Java 可调用性视为已获授权。
  */
 @Component("opsActionTool")
 @Slf4j
@@ -22,7 +20,6 @@ public class OpsActionTool {
 
     private final OpsActionPort opsActionPort;
 
-    @Tool(description = "执行运维应急止血处置动作（如终止慢查会话、临时扩容连接池），产出规范运维工单")
     public String executeEmergencyAction(String service, String actionType, String targetIdentifier, String operator) {
         log.info("[OpsActionTool] 收到应急处置指令: service={}, actionType={}, target={}, operator={}",
                 service, actionType, targetIdentifier, operator);

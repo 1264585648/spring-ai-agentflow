@@ -4,79 +4,77 @@ import com.example.springai.core.card.model.InteractiveCard;
 import com.example.springai.core.event.SseEventType;
 import com.example.springai.core.event.SsePacket;
 import org.springframework.stereotype.Component;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
-import java.util.List;
-import java.util.Map;
-
-/**
- * SSE 统一事件发布器
- * 为各个 SubAgent 和 Pipeline 提供开箱即用的事件推送 API
- */
+/** 事件使用显式原始 turnId；时间戳不参与去重，回执不创建新的活动回合。 */
 @Component
 public class SseEventPublisher {
-
-    private final SseEmitterManager emitterManager;
-
-    public SseEventPublisher(SseEmitterManager emitterManager) {
-        this.emitterManager = emitterManager;
+    private final SseEmitterManager manager;
+    private final Map<String, String> activeTurns = new ConcurrentHashMap<>();
+    // 进程级单调序列允许有间隔；跨进程/重启去重依赖包 UUID，不依赖序列从零开始。
+    private final AtomicLong sequence = new AtomicLong();
+    public SseEventPublisher(SseEmitterManager manager) { this.manager = manager; }
+    public void bindTurn(String sessionId, String turnId) {
+        if (hasText(sessionId) && hasText(turnId)) activeTurns.put(sessionId, turnId);
     }
-
-    /**
-     * 发送思考内容块
-     */
-    public boolean sendThinking(String sessionId, String thinkingChunk) {
-        return emitterManager.send(sessionId, SsePacket.of(SseEventType.THINKING, Map.of("content", thinkingChunk)));
+    public void unbindTurn(String sessionId, String turnId) {
+        if (hasText(sessionId) && hasText(turnId)) activeTurns.remove(sessionId, turnId);
     }
-
-    /**
-     * 发送正式回复文本流块 (打字机效果)
-     */
-    public boolean sendMessage(String sessionId, String messageChunk) {
-        return emitterManager.send(sessionId, SsePacket.of(SseEventType.MESSAGE, Map.of("content", messageChunk)));
+    public boolean isStaleTurn(String sessionId, String turnId) {
+        return hasText(turnId) && !Objects.equals(turnId, activeTurns.get(sessionId));
     }
-
-    /**
-     * 发送进度通知 (例如: "正在查询案件逾期账单...")
-     */
-    public boolean sendProgress(String sessionId, String stage, String description) {
-        return emitterManager.send(sessionId, SsePacket.of(SseEventType.PROGRESS, Map.of(
-                "stage", stage,
-                "description", description
-        )));
+    public int activeTurnCount() { return activeTurns.size(); }
+    public boolean sendThinking(String sessionId, String content) { return sendThinking(sessionId, activeTurns.get(sessionId), content); }
+    public boolean sendThinking(String sessionId, String turnId, String content) {
+        return send(sessionId, turnId, SseEventType.THINKING, Map.of("content", text(content)), true);
     }
-
-    /**
-     * 发送通用人机协同方案交互确认卡片 (Human-in-the-loop 交互)
-     */
-    public boolean sendInteractiveCard(String sessionId, InteractiveCard card) {
-        return emitterManager.send(sessionId, SsePacket.of(SseEventType.INTERACTIVE_CARD, card));
+    public boolean sendMessage(String sessionId, String content) { return sendMessage(sessionId, activeTurns.get(sessionId), content); }
+    public boolean sendMessage(String sessionId, String turnId, String content) {
+        return send(sessionId, turnId, SseEventType.MESSAGE, Map.of("content", text(content)), true);
     }
-
-    /**
-     * 发送推荐追问列表
-     */
-    public boolean sendRecommendQuestions(String sessionId, List<String> questions) {
-        return emitterManager.send(sessionId, SsePacket.of(SseEventType.RECOMMEND_QUESTIONS, Map.of("questions", questions)));
+    public boolean sendProgress(String sessionId, String stage, String description) { return sendProgress(sessionId, activeTurns.get(sessionId), stage, description); }
+    public boolean sendProgress(String sessionId, String turnId, String stage, String description) {
+        return send(sessionId, turnId, SseEventType.PROGRESS, Map.of("stage", text(stage), "description", text(description)), true);
     }
-
-    /**
-     * 发送会话标题
-     */
+    public boolean sendInteractiveCard(String sessionId, InteractiveCard card) { return sendInteractiveCard(sessionId, activeTurns.get(sessionId), card); }
+    public boolean sendInteractiveCard(String sessionId, String turnId, InteractiveCard card) {
+        if (card == null) return false;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("actionId", card.getActionId()); body.put("cardType", card.getCardType());
+        body.put("title", card.getTitle()); body.put("description", card.getDescription()); body.put("fields", card.getFields());
+        body.put("confirmButtonText", card.getConfirmButtonText()); body.put("cancelButtonText", card.getCancelButtonText());
+        body.put("simulation", card.isSimulation());
+        return send(sessionId, turnId, SseEventType.INTERACTIVE_CARD, body, true);
+    }
+    public boolean sendRecommendQuestions(String sessionId, List<String> questions) { return sendRecommendQuestions(sessionId, activeTurns.get(sessionId), questions); }
+    public boolean sendRecommendQuestions(String sessionId, String turnId, List<String> questions) {
+        return send(sessionId, turnId, SseEventType.RECOMMEND_QUESTIONS, Map.of("questions", questions == null ? List.of() : questions), true);
+    }
     public boolean sendConversationTitle(String sessionId, String title) {
-        return emitterManager.send(sessionId, SsePacket.of(SseEventType.CONVERSATION_TITLE, Map.of("title", title)));
+        return send(sessionId, activeTurns.get(sessionId), SseEventType.CONVERSATION_TITLE, Map.of("title", text(title)), true);
     }
-
-    /**
-     * 当前回合结束。连接留给同一 sessionId 的后续提问。
-     */
-    public boolean sendDone(String sessionId) {
-        return emitterManager.send(sessionId, SsePacket.of(SseEventType.DONE, Map.of("status", "completed")));
+    public boolean sendDone(String sessionId) { return sendDone(sessionId, activeTurns.get(sessionId)); }
+    public boolean sendDone(String sessionId, String turnId) {
+        return send(sessionId, turnId, SseEventType.DONE, Map.of("status", "completed"), true);
     }
-
-    /**
-     * 发送错误信息。不关闭长连接，客户端可以在同一会话里继续提问。
-     */
-    public boolean sendError(String sessionId, String errorMsg) {
-        return emitterManager.send(sessionId, SsePacket.of(SseEventType.ERROR, Map.of("message", errorMsg)));
+    public boolean sendError(String sessionId, String message) { return sendError(sessionId, activeTurns.get(sessionId), message); }
+    public boolean sendError(String sessionId, String turnId, String message) {
+        return send(sessionId, turnId, SseEventType.ERROR, Map.of("message", text(message)), true);
     }
+    public boolean sendCardReceipt(String sessionId, String turnId, String actionId, String ticketId, String content) {
+        return send(sessionId, turnId, SseEventType.MESSAGE, Map.of("content", text(content), "actionId", text(actionId),
+                "ticketId", text(ticketId), "cardReceipt", true), false);
+    }
+    private boolean send(String sessionId, String turnId, SseEventType type, Map<String, Object> base, boolean currentOnly) {
+        if (currentOnly && isStaleTurn(sessionId, turnId)) return false;
+        Map<String, Object> body = new LinkedHashMap<>(base);
+        if (hasText(turnId)) body.put("turnId", turnId);
+        body.put("sequence", sequence.incrementAndGet());
+        // 在此之后即使新回合开始，该包仍携带旧 turnId，绝不能重新读取当前回合并改写归属。
+        return manager.send(sessionId, SsePacket.of(type, body));
+    }
+    private static String text(String s) { return s == null ? "" : s; }
+    private static boolean hasText(String s) { return s != null && !s.isBlank(); }
 }

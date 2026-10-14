@@ -1,88 +1,63 @@
 package com.example.springai.capability.ops.card;
 
-import com.example.springai.core.card.CardSubmitHandler;
-import com.example.springai.core.card.dto.CardSubmitRequest;
-import com.example.springai.core.card.dto.CardSubmitResult;
 import com.example.springai.capability.ops.model.OpsActionParam;
 import com.example.springai.capability.ops.model.OpsActionResult;
 import com.example.springai.capability.ops.port.OpsActionPort;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import com.example.springai.core.card.CardSubmitHandler;
+import com.example.springai.core.card.action.ApprovedCardSubmission;
+import com.example.springai.core.card.dto.CardSubmitResult;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
-
+import java.math.BigDecimal;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
-/**
- * 智能运维排障与应急处置卡片 SPI 处理器 (OpsActionCardSubmitHandler)
- * 职责:
- * 1. 响应 TROUBLESHOOT_ACTION 等卡片提交事件 (Human-in-the-loop)；
- * 2. 校验目标服务名与应急处置参数；
- * 3. 通过 OpsActionPort 标准端口下发止血指令（如 Kill 慢会话、扩容连接池），生成应急工单号；
- * 4. 优先级高于通用兜底处理器 (@Order(10))。
- */
+/** 原始 HTTP DTO 不能传入执行器；纯参数预检在 ActionGate 申领之前完成。 */
 @Component
 @Order(10)
-@Slf4j
 public class OpsActionCardSubmitHandler implements CardSubmitHandler {
-
     public static final String CARD_TYPE_OPS = "OPS_ACTION";
     public static final String CARD_TYPE_TROUBLESHOOT = "TROUBLESHOOT_ACTION";
-
-    private final OpsActionPort troubleshootActionPort;
-
-    public OpsActionCardSubmitHandler(OpsActionPort troubleshootActionPort) {
-        this.troubleshootActionPort = troubleshootActionPort;
+    private final OpsActionPort port;
+    public OpsActionCardSubmitHandler(OpsActionPort port) { this.port = Objects.requireNonNull(port); }
+    @Override public boolean supports(String type) {
+        return CARD_TYPE_OPS.equalsIgnoreCase(type) || CARD_TYPE_TROUBLESHOOT.equalsIgnoreCase(type);
     }
-
-    public OpsActionCardSubmitHandler() {
-        this(new com.example.springai.capability.ops.mock.MockOpsActionAdapter());
+    @Override public boolean isSimulation() { return port.isSimulation(); }
+    @Override public void validate(ApprovedCardSubmission submission) { parameters(submission); }
+    @Override public CardSubmitResult handleSubmit(ApprovedCardSubmission submission) {
+        OpsActionParam param = parameters(submission);
+        OpsActionResult result = port.executeAction(param);
+        if (result == null || !result.isSuccess()) return CardSubmitResult.fail("执行端口未返回确定成功结果");
+        return CardSubmitResult.ok(result.getTicketId(), (isSimulation() ? "模拟执行（未变更真实系统）：" : "")
+                + (result.getAuditMessage() == null ? "" : result.getAuditMessage()));
     }
-
-    @Override
-    public boolean supports(String cardType) {
-        return CARD_TYPE_OPS.equalsIgnoreCase(cardType) || CARD_TYPE_TROUBLESHOOT.equalsIgnoreCase(cardType);
-    }
-
-    @Override
-    public CardSubmitResult handleSubmit(CardSubmitRequest request) {
-        Map<String, Object> formValues = request.getFormValues();
-        log.info("[CardSPI:SRE] 接收到排障应急处置提交请求, actionId: {}, 表单数据: {}",
-                request.getActionId(), formValues);
-
-        String service = "order-service";
-        String actionType = "Kill阻塞慢查询并临时扩容连接池";
-        String targetIdentifier = "trx_10423";
-
-        if (formValues != null) {
-            if (formValues.get("service") != null && !String.valueOf(formValues.get("service")).isBlank()) {
-                service = String.valueOf(formValues.get("service")).trim();
-            }
-            if (formValues.get("action_type") != null && !String.valueOf(formValues.get("action_type")).isBlank()) {
-                actionType = String.valueOf(formValues.get("action_type")).trim();
-            }
-            if (formValues.get("target_identifier") != null && !String.valueOf(formValues.get("target_identifier")).isBlank()) {
-                targetIdentifier = String.valueOf(formValues.get("target_identifier")).trim();
-            }
+    private static OpsActionParam parameters(ApprovedCardSubmission submission) {
+        Map<String, Object> values = submission.getFormValues();
+        String action = required(values, "action_type");
+        // 仅兼容已经签发的旧版展示值；未知自由文本不能直接成为执行命令。
+        if ("Kill阻塞慢查询并临时扩容连接池".equals(action)) action = "KILL_SLOW_SESSION_AND_EXPAND_POOL";
+        if (!Set.of("KILL_SLOW_SESSION", "EXPAND_POOL_LIMIT", "KILL_SLOW_SESSION_AND_EXPAND_POOL", "RESTART_POD").contains(action)) {
+            throw new IllegalArgumentException("不支持的运维动作类型");
         }
-
-        String operator = "SRE-Oncall";
-        if (formValues != null && formValues.get("operator") != null && !String.valueOf(formValues.get("operator")).isBlank()) {
-            operator = String.valueOf(formValues.get("operator")).trim();
+        Integer pool = null;
+        if (values.get("max_pool_size") != null) {
+            try { pool = new BigDecimal(values.get("max_pool_size").toString()).intValueExact(); }
+            catch (ArithmeticException | NumberFormatException ex) { throw new IllegalArgumentException("连接池上限必须为整数"); }
+            if (pool < 10 || pool > 500) throw new IllegalArgumentException("连接池上限须在 10~500 之间");
         }
-
-        OpsActionParam param = OpsActionParam.builder()
-                .service(service)
-                .actionType(actionType)
-                .targetIdentifier(targetIdentifier)
-                .reason("前端交互卡片人工核验确认 (actionId: " + request.getActionId() + ")")
-                .operator(operator)
-                .build();
-
-        OpsActionResult result = troubleshootActionPort.executeAction(param);
-        log.info("[CardSPI:SRE] 处置成功: 单号: {}, 服务: {}, 动作: {}",
-                result.getTicketId(), service, actionType);
-
-        return CardSubmitResult.ok(result.getTicketId(), result.getAuditMessage());
+        if ((action.equals("EXPAND_POOL_LIMIT") || action.equals("KILL_SLOW_SESSION_AND_EXPAND_POOL")) && pool == null) {
+            throw new IllegalArgumentException("扩容动作缺少 max_pool_size");
+        }
+        String reason = values.get("remark") instanceof String text && !text.isBlank() ? text : "人工确认";
+        return OpsActionParam.builder().service(required(values, "service")).actionType(action)
+                .targetIdentifier(required(values, "target_identifier")).maxPoolSize(pool)
+                .reason("actionId=" + submission.getActionId() + "; " + reason)
+                .operator(submission.getActorId()).idempotencyKey(submission.getActionId()).build();
+    }
+    private static String required(Map<String, Object> values, String key) {
+        if (!(values.get(key) instanceof String text) || text.isBlank()) throw new IllegalArgumentException("缺少有效执行参数: " + key);
+        return text;
     }
 }

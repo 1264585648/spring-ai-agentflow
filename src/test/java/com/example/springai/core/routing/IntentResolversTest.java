@@ -32,7 +32,7 @@ class IntentResolversTest {
         masterAgentRouter = mock(MasterAgentRouter.class);
 
         l1RuleResolver = new L1RuleResolver(l1RuleMatcher);
-        l2VectorResolver = new L2VectorResolver();
+        l2VectorResolver = new L2VectorResolver(null, null);
         l3MasterAgentResolver = new L3MasterAgentResolver(masterAgentRouter);
     }
 

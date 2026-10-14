@@ -33,8 +33,8 @@ public class ThreadPoolConfig {
         executor.setQueueCapacity(500);
         // 线程前缀，极大方便排查日志和 jstack 线程堆栈分析
         executor.setThreadNamePrefix("agent-pipeline-");
-        // 拒绝策略: 调用者运行 (CallerRunsPolicy)，形成自然背压，防止系统被冲垮
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        // 拒绝策略: AbortPolicy，队列与最大线程饱和时立即抛出 RejectedExecutionException，由流水线返回明确拒绝态，避免阻塞 HTTP 调用线程 (F14)
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         // 优雅停机: 容器关闭时等待正在执行的任务完成
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
@@ -46,7 +46,7 @@ public class ThreadPoolConfig {
     }
 
     /**
-     * 2. 异步后处理专用线程池 (旁路低优先级任务: 生成推荐问题、总结标题、写审计日志)
+     * 2. 异步后处理专用线程池 (旁路低优先级任务: 生成推荐问题、总结标题)
      */
     @Bean("agentAsyncPostExecutor")
     public Executor agentAsyncPostExecutor() {
@@ -55,8 +55,15 @@ public class ThreadPoolConfig {
         executor.setMaxPoolSize(Math.max(4, CPU_CORES * 2));
         executor.setQueueCapacity(200);
         executor.setThreadNamePrefix("agent-async-post-");
-        // 旁路任务若溢出，可直接丢弃老任务或记录日志后丢弃，绝不能影响主流程
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.DiscardOldestPolicy());
+        // 旁路任务溢出时记录明确告警日志后丢弃最老低优任务，严禁静默吞没且绝不影响主流程 (F14)
+        executor.setRejectedExecutionHandler((r, pool) -> {
+            log.warn("[ThreadPool] agentAsyncPostExecutor 队列已满 (active={}, queue={})，触发旁路任务降级丢弃",
+                    pool.getActiveCount(), pool.getQueue().size());
+            if (!pool.isShutdown()) {
+                pool.getQueue().poll();
+                pool.execute(r);
+            }
+        });
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(15);
 

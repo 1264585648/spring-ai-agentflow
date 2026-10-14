@@ -1,84 +1,55 @@
 package com.example.springai.web.controller;
 
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.util.StringUtils;
-import com.example.springai.web.dto.ChatRequest;
-import com.example.springai.infra.sse.SseEmitterManager;
+import com.example.springai.core.event.SseEventType;
+import com.example.springai.core.event.SsePacket;
 import com.example.springai.core.pipeline.AgentPipelineService;
+import com.example.springai.infra.sse.SseEmitterManager;
+import com.example.springai.web.dto.ChatRequest;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.RejectedExecutionException;
 
-/**
- * 接入层: 智能业务答疑对话接入控制器 (ChatController)
- * 职责: 鉴权校验 ➔ 建立 SSE 长连接 ➔ 接收提问 ➔ 触发 Pipeline 流水线
- */
+/** HTTP/SSE 接入；排队拒绝返回 503，不再将拒绝伪装为已接收。 */
 @RestController
 @RequestMapping("/api/v1/chat")
-@CrossOrigin(origins = "*")
-@Slf4j
 @RequiredArgsConstructor
 public class ChatController {
-
     private final SseEmitterManager emitterManager;
     private final AgentPipelineService pipelineService;
-
-    /**
-     * 1. 建立 SSE 长连接通道
-     * 前端进入工作台或打开问答窗口时调用
-     */
-    @GetMapping(value = "/connect", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter connect(@RequestParam("sessionId") String sessionId) {
-        log.info("[ChatController] 收到 SSE 连接请求, sessionId: {}", sessionId);
-        return emitterManager.createEmitter(sessionId);
-    }
-
-    /**
-     * 2. 发送提问接口 (标准前后端分离模式)
-     * 客户端先建立 /connect，然后通过此接口投递问题
-     */
+    @GetMapping(value="/connect",produces=MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter connect(@RequestParam("sessionId") String sessionId) { return emitterManager.createEmitter(sessionId); }
     @PostMapping("/ask")
-    public ResponseEntity<Map<String, Object>> ask(@RequestBody ChatRequest request) {
-        log.info("[ChatController] 收到用户提问, sessionId: {}, query: {}", 
-                request.getSessionId(), request.getQuery());
-
-        if (!StringUtils.hasText(request.getSessionId()) || !StringUtils.hasText(request.getQuery())) {
-            return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "sessionId 或 query 不能为空"));
-        }
-
-        // 异步交给流水线编排服务处理 (流式事件通过 SseEmitter 回传)
-        pipelineService.process(request);
-
-        return ResponseEntity.ok(Map.of(
-                "code", 200,
-                "message", "请求已提交处理",
-                "sessionId", request.getSessionId()
-        ));
+    public ResponseEntity<Map<String,Object>> ask(@RequestBody ChatRequest request) {
+        if(request==null || blank(request.getSessionId()) || blank(request.getQuery())) return failure(400,"sessionId 或 query 不能为空");
+        if(!emitterManager.isConnected(request.getSessionId())) return failure(409,"SSE_NOT_READY: 请先建立实时通道");
+        if(blank(request.getTurnId())) request.setTurnId(UUID.randomUUID().toString());
+        try { pipelineService.process(request); }
+        catch(RejectedExecutionException ex) { return failure(503,"QUEUE_SATURATED: 系统繁忙，请稍后重试"); }
+        catch(IllegalArgumentException ex) { return failure(400,ex.getMessage()); }
+        return ResponseEntity.ok(Map.of("code",200,"message","请求已提交处理","sessionId",request.getSessionId(),"turnId",request.getTurnId()));
     }
-
-    /**
-     * 3. 极速单路体验接口 (方便直接在浏览器或 Postman 中通过 GET /stream 快速调试)
-     */
-    @GetMapping(value = "/stream-ask", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamAsk(
-            @RequestParam("sessionId") String sessionId,
-            @RequestParam("query") String query,
-            @RequestParam(value = "caseId", required = false) String caseId) {
-
-        log.info("[ChatController] 收到单路体验请求, sessionId: {}, query: {}", sessionId, query);
-        SseEmitter emitter = emitterManager.createEmitter(sessionId);
-
-        ChatRequest request = new ChatRequest();
-        request.setSessionId(sessionId);
-        request.setQuery(query);
-        request.setCaseId(caseId);
-
-        pipelineService.process(request);
-
+    @PostMapping("/cancel")
+    public ResponseEntity<Map<String,Object>> cancel(@RequestParam("sessionId") String sessionId) {
+        return ResponseEntity.ok(Map.of("code",200,"cancelled",pipelineService.cancelActiveTurn(sessionId)));
+    }
+    @GetMapping(value="/stream-ask",produces=MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamAsk(@RequestParam("sessionId") String sessionId,@RequestParam("query") String query,
+            @RequestParam(value="caseId",required=false) String caseId,@RequestParam(value="turnId",required=false) String turnId) {
+        var emitter=emitterManager.createEmitter(sessionId); var request=new ChatRequest();
+        request.setSessionId(sessionId); request.setQuery(query); request.setCaseId(caseId);
+        request.setTurnId(blank(turnId)?UUID.randomUUID().toString():turnId);
+        try { pipelineService.process(request); }
+        catch(RuntimeException ex) {
+            emitterManager.send(sessionId,SsePacket.of(SseEventType.ERROR,Map.of("turnId",request.getTurnId(),"message","请求未被接收")));
+            emitterManager.complete(sessionId);
+        }
         return emitter;
     }
+    private static boolean blank(String value) { return value==null || value.isBlank(); }
+    private static ResponseEntity<Map<String,Object>> failure(int code,String message) { return ResponseEntity.status(code).body(Map.of("code",code,"message",message)); }
 }

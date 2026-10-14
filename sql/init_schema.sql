@@ -11,8 +11,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- -----------------------------------------------------------------------------
 -- 1. 规则定义主表 (sys_rule_definition)
 -- -----------------------------------------------------------------------------
-DROP TABLE IF EXISTS `sys_rule_definition`;
-CREATE TABLE `sys_rule_definition` (
+CREATE TABLE IF NOT EXISTS `sys_rule_definition` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `rule_code` VARCHAR(64) NOT NULL COMMENT '规则唯一编码（如 CMD_QUERY_ACCOUNT）',
   `rule_name` VARCHAR(128) NOT NULL COMMENT '规则友好名称',
@@ -35,8 +34,7 @@ CREATE TABLE `sys_rule_definition` (
 -- -----------------------------------------------------------------------------
 -- 2. 规则链式编排步骤表 (sys_rule_chain_step) - 针对模式 A 确定性工作流
 -- -----------------------------------------------------------------------------
-DROP TABLE IF EXISTS `sys_rule_chain_step`;
-CREATE TABLE `sys_rule_chain_step` (
+CREATE TABLE IF NOT EXISTS `sys_rule_chain_step` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '步骤主键ID',
   `rule_id` BIGINT NOT NULL COMMENT '关联主规则ID',
   `step_order` INT NOT NULL DEFAULT 1 COMMENT '执行步骤顺序（从1递增）',
@@ -53,8 +51,7 @@ CREATE TABLE `sys_rule_chain_step` (
 -- -----------------------------------------------------------------------------
 -- 3. 规则命中审计日志表 (sys_rule_audit_log)
 -- -----------------------------------------------------------------------------
-DROP TABLE IF EXISTS `sys_rule_audit_log`;
-CREATE TABLE `sys_rule_audit_log` (
+CREATE TABLE IF NOT EXISTS `sys_rule_audit_log` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '日志主键ID',
   `rule_code` VARCHAR(64) NOT NULL COMMENT '命中的规则编码',
   `session_id` VARCHAR(64) DEFAULT NULL COMMENT '用户对话会话ID',
@@ -72,8 +69,7 @@ CREATE TABLE `sys_rule_audit_log` (
 -- -----------------------------------------------------------------------------
 -- 4. 多智能体矩阵定义与生命周期配置表 (sys_agent_definition)
 -- -----------------------------------------------------------------------------
-DROP TABLE IF EXISTS `sys_agent_definition`;
-CREATE TABLE `sys_agent_definition` (
+CREATE TABLE IF NOT EXISTS `sys_agent_definition` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `agent_code` VARCHAR(64) NOT NULL COMMENT '智能体唯一编码（如 QUERY_REWRITER, MASTER_AGENT）',
   `agent_name` VARCHAR(128) NOT NULL COMMENT '智能体友好名称',
@@ -98,9 +94,9 @@ CREATE TABLE `sys_agent_definition` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='企业多智能体矩阵定义与生命周期配置表';
 
 -- -----------------------------------------------------------------------------
--- 5. 开源演示与种子数据 (Seed Data)
+-- 5. 开源演示与种子数据 (Seed Data，使用 INSERT IGNORE 保护已有数据不被覆盖)
 -- -----------------------------------------------------------------------------
-INSERT INTO `sys_rule_definition` 
+INSERT IGNORE INTO `sys_rule_definition` 
   (`rule_code`, `rule_name`, `match_type`, `pattern_expr`, `target_type`, `target_ref`, `param_template`, `priority`, `is_enabled`, `description`)
 VALUES
   (
@@ -153,7 +149,7 @@ VALUES
   );
 
 -- 初始化 6 大核心多智能体矩阵定义 (企业级智能运维与排障体系)
-INSERT INTO `sys_agent_definition`
+INSERT IGNORE INTO `sys_agent_definition`
   (`agent_code`, `agent_name`, `agent_type`, `layer`, `system_prompt`, `dispatch_desc`, `model_name`, `temperature`, `attached_tools`, `is_system_core`, `status`, `is_enabled`, `version`, `description`)
 VALUES
   (
@@ -213,7 +209,7 @@ VALUES
     '负责微服务日志检索、异常堆栈解析、Trace 分布式链路追踪与已知报错排查',
     NULL,
     0.10,
-    '[]',
+    '["logQueryTool"]',
     0,
     'ONLINE',
     1,
@@ -229,7 +225,7 @@ VALUES
     '负责数据库慢SQL检索、死锁与长事务分析、连接池水位诊断与性能调优建议',
     NULL,
     0.10,
-    '[]',
+    '["databaseDiagnoseTool"]',
     0,
     'ONLINE',
     1,
@@ -245,7 +241,7 @@ VALUES
     '负责故障综合研判、制定应急止血处置方案、装配确认卡片并引导工程师核验执行',
     NULL,
     0.20,
-    '[]',
+    '["logQueryTool", "databaseDiagnoseTool"]',
     0,
     'ONLINE',
     1,
@@ -254,10 +250,9 @@ VALUES
   );
 
 -- -----------------------------------------------------------------------------
--- 5. L2 向量知识库与排障 SOP 表 (sys_faq_definition)
+-- 6. L2 向量知识库与排障 SOP 表 (sys_faq_definition)
 -- -----------------------------------------------------------------------------
-DROP TABLE IF EXISTS `sys_faq_definition`;
-CREATE TABLE `sys_faq_definition` (
+CREATE TABLE IF NOT EXISTS `sys_faq_definition` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键自增ID',
   `faq_code` VARCHAR(64) NOT NULL COMMENT 'FAQ唯一编码（如 FAQ_SRE_504）',
   `faq_title` VARCHAR(255) NOT NULL COMMENT '标准问题（Canonical Question，QQ匹配主体）',

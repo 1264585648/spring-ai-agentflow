@@ -45,6 +45,20 @@ public interface ConversationMemory {
     List<ConversationMessage> getRecentMessages(String sessionId, int lastN);
 
     /**
+     * 获取最近的 N 轮问答消息 (1 轮 = 1 条 USER + 1 条 ASSISTANT，即 2 * lastNRounds 条消息)
+     *
+     * @param sessionId 会话ID
+     * @param lastNRounds 最大返回问答轮数 (必须 > 0)
+     * @return 消息列表快照 (按时间升序)
+     */
+    default List<ConversationMessage> getRecentRounds(String sessionId, int lastNRounds) {
+        if (lastNRounds <= 0) {
+            return java.util.Collections.emptyList();
+        }
+        return getRecentMessages(sessionId, lastNRounds * 2);
+    }
+
+    /**
      * 获取指定会话所有历史消息快照
      *
      * @param sessionId 会话ID

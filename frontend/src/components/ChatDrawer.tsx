@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChatMessage, SseEventType, CommandPaletteItem } from '../types/chat';
+import {
+  ChatMessage,
+  SseEventType,
+  SseConnectionState,
+  CommandPaletteItem,
+  InteractiveCardData,
+} from '../types/chat';
 import { chatClient } from '../api/sseClient';
 import { ThinkingPanel } from './ThinkingPanel';
 import { InteractiveCard } from './InteractiveCard';
@@ -19,6 +25,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputQuery, setInputQuery] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [connectionState, setConnectionState] = useState<SseConnectionState>('disconnected');
   const [currentProgress, setCurrentProgress] = useState<string | null>(null);
 
   // 斜杠快捷指令面板状态
@@ -27,6 +34,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
   const [paletteSelectedIndex, setPaletteSelectedIndex] = useState<number>(0);
 
   const sessionIdRef = useRef<string>('sess_' + Date.now());
+  const activeTurnIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -50,8 +58,12 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
     scrollToBottom();
   }, [messages, currentProgress]);
 
-  // 初始化长连接
+  // 订阅长连接状态与事件流
   useEffect(() => {
+    const unsubscribeState = chatClient.onConnectionStateChange((st) => {
+      setConnectionState(st);
+    });
+
     if (isOpen) {
       chatClient.connect(
         sessionIdRef.current,
@@ -59,130 +71,199 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
           handleIncomingSseEvent(eventType, data);
         },
         (err) => {
-          console.error('[SSE Error]', err);
-          setIsStreaming(false);
+          console.error('[SSE Transport Error]', err);
+          if (activeTurnIdRef.current) {
+            const interruptedTurnId = activeTurnIdRef.current;
+            activeTurnIdRef.current = null;
+            setIsStreaming(false);
+            setCurrentProgress(null);
+            setMessages((prev) =>
+              updateTargetAssistantMessage(prev, interruptedTurnId, undefined, (msg) => ({
+                ...msg,
+                turnDone: true,
+                errorText: msg.errorText || 'SSE 实时连接中断，当前回合已终止，请点击重试。',
+              }))
+            );
+          }
         }
       );
     }
     return () => {
+      unsubscribeState();
       chatClient.close();
     };
   }, [isOpen]);
 
+  /**
+   * 根据 actionId 或 turnId 精确定位目标助手消息，防止旧回合或旧卡片回执串入新回合 (F07 / T13 / T14)
+   */
+  const updateTargetAssistantMessage = (
+    list: ChatMessage[],
+    eventTurnId: string | undefined,
+    actionId: string | undefined,
+    updater: (msg: ChatMessage) => ChatMessage
+  ): ChatMessage[] => {
+    let targetIndex = -1;
+
+    // 1. 若携带 actionId（如卡片执行回执），优先匹配持有该卡片的原回合消息
+    if (actionId) {
+      targetIndex = list.findIndex(
+        (m) =>
+          m.role === 'assistant' &&
+          (m.interactiveCard?.actionId === actionId ||
+            (m.interactiveCards && m.interactiveCards.some((c) => c.actionId === actionId)))
+      );
+    }
+
+    // 2. 按事件携带的 turnId 精确匹配对应回合
+    if (targetIndex < 0 && eventTurnId) {
+      targetIndex = list.findIndex((m) => m.role === 'assistant' && m.turnId === eventTurnId);
+    }
+
+    // 3. 兼容未携带 turnId 的旧事件：仅当当前有活动 turnId 时回退匹配活动回合
+    if (targetIndex < 0 && !eventTurnId && activeTurnIdRef.current) {
+      targetIndex = list.findIndex((m) => m.role === 'assistant' && m.turnId === activeTurnIdRef.current);
+    }
+
+    // 4. 兜底匹配最后一条未结束的助手消息
+    if (targetIndex < 0 && !eventTurnId && !actionId) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].role === 'assistant') {
+          targetIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (targetIndex < 0) {
+      return list;
+    }
+
+    const next = [...list];
+    next[targetIndex] = updater(next[targetIndex]);
+    return next;
+  };
+
   const handleIncomingSseEvent = (eventType: SseEventType, data: any) => {
+    const eventTurnId: string | undefined = typeof data === 'object' && data !== null ? data.turnId : undefined;
+    const eventActionId: string | undefined = typeof data === 'object' && data !== null ? data.actionId : undefined;
+
     switch (eventType) {
       case 'thinking':
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                thinkingContent: (last.thinkingContent || '') + (data.content || ''),
-              },
-            ];
-          }
-          return prev;
-        });
+        setMessages((prev) =>
+          updateTargetAssistantMessage(prev, eventTurnId, eventActionId, (msg) => ({
+            ...msg,
+            thinkingContent: (msg.thinkingContent || '') + (data?.content || ''),
+          }))
+        );
         break;
 
       case 'progress':
-        setCurrentProgress(`${data.description || '正在处理中...'}`);
+        if (!eventTurnId || !activeTurnIdRef.current || eventTurnId === activeTurnIdRef.current) {
+          setCurrentProgress(`${data?.description || '正在处理中...'}`);
+        }
         break;
 
       case 'message':
-        setCurrentProgress(null);
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                content: (last.content || '') + (data.content || ''),
-              },
-            ];
-          }
-          return prev;
-        });
+        if (!eventTurnId || !activeTurnIdRef.current || eventTurnId === activeTurnIdRef.current) {
+          setCurrentProgress(null);
+        }
+        setMessages((prev) =>
+          updateTargetAssistantMessage(prev, eventTurnId, eventActionId, (msg) => ({
+            ...msg,
+            content: (msg.content || '') + (data?.content || ''),
+          }))
+        );
         break;
 
       case 'interactive_card':
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                interactiveCard: data,
-              },
-            ];
-          }
-          return prev;
-        });
+        setMessages((prev) =>
+          updateTargetAssistantMessage(prev, eventTurnId, data?.actionId, (msg) => {
+            const incomingCard: InteractiveCardData = data;
+            const existingCards = msg.interactiveCards ? [...msg.interactiveCards] : [];
+            const dupIndex = existingCards.findIndex((c) => c.actionId === incomingCard.actionId);
+            if (dupIndex >= 0) {
+              existingCards[dupIndex] = incomingCard;
+            } else {
+              existingCards.push(incomingCard);
+            }
+            return {
+              ...msg,
+              interactiveCard: incomingCard,
+              interactiveCards: existingCards,
+            };
+          })
+        );
         break;
 
       case 'recommend_questions':
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                recommendQuestions: data.questions || [],
-              },
-            ];
-          }
-          return prev;
-        });
+        setMessages((prev) =>
+          updateTargetAssistantMessage(prev, eventTurnId, eventActionId, (msg) => ({
+            ...msg,
+            recommendQuestions: data?.questions || [],
+          }))
+        );
         break;
 
       case 'done':
-        setIsStreaming(false);
-        setCurrentProgress(null);
+        if (!eventTurnId || !activeTurnIdRef.current || eventTurnId === activeTurnIdRef.current) {
+          activeTurnIdRef.current = null;
+          setIsStreaming(false);
+          setCurrentProgress(null);
+        }
+        setMessages((prev) =>
+          updateTargetAssistantMessage(prev, eventTurnId, eventActionId, (msg) => ({
+            ...msg,
+            turnDone: true,
+          }))
+        );
         break;
 
-      case 'error':
-        setIsStreaming(false);
-        setCurrentProgress(null);
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          const text = typeof data === 'string' ? data : (data?.message || '处理失败');
-          if (last && last.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                content: (last.content || '') + text,
-              },
-            ];
-          }
-          return prev;
-        });
+      case 'error': {
+        const text = typeof data === 'string' ? data : data?.message || '处理失败';
+        if (!eventTurnId || !activeTurnIdRef.current || eventTurnId === activeTurnIdRef.current) {
+          activeTurnIdRef.current = null;
+          setIsStreaming(false);
+          setCurrentProgress(null);
+        }
+        setMessages((prev) =>
+          updateTargetAssistantMessage(prev, eventTurnId, eventActionId, (msg) => ({
+            ...msg,
+            turnDone: true,
+            errorText: text,
+          }))
+        );
         break;
+      }
     }
   };
 
   const handleSendMessage = async (textToSend?: string) => {
-    const text = textToSend || inputQuery;
-    if (!text.trim() || isStreaming) return;
+    const text = (textToSend ?? inputQuery).trim();
+    if (!text || isStreaming) return;
 
+    // 预生成本回合唯一标识 turnId，消除首个 SSE 事件早于 HTTP 响应到达的竞态 (F07 / T14)
+    const turnId = 'turn_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    activeTurnIdRef.current = turnId;
+
+    const now = Date.now();
     const userMsg: ChatMessage = {
-      id: 'msg_' + Date.now(),
+      id: 'msg_' + now,
+      turnId,
       role: 'user',
       content: text,
-      timestamp: Date.now(),
+      timestamp: now,
     };
 
     const assistantMsg: ChatMessage = {
-      id: 'msg_asst_' + Date.now(),
+      id: 'msg_asst_' + now,
+      turnId,
       role: 'assistant',
       content: '',
       thinkingContent: '',
-      timestamp: Date.now(),
+      interactiveCards: [],
+      retryQuery: text,
+      timestamp: now,
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
@@ -191,11 +272,28 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
     setCurrentProgress('正在连接智能体流水线...');
 
     try {
-      await chatClient.sendQuestion(sessionIdRef.current, text, caseId);
+      const acceptRes = await chatClient.sendQuestion(sessionIdRef.current, text, caseId, turnId);
+      if (acceptRes?.turnId && acceptRes.turnId !== turnId) {
+        activeTurnIdRef.current = acceptRes.turnId;
+        setMessages((prev) =>
+          prev.map((m) => (m.turnId === turnId ? { ...m, turnId: acceptRes.turnId } : m))
+        );
+      }
     } catch (e: any) {
+      if (activeTurnIdRef.current === turnId) {
+        activeTurnIdRef.current = null;
+      }
       setIsStreaming(false);
       setCurrentProgress(null);
-      alert('提问失败：' + e.message);
+      const errMsg = e?.message || '提问请求发送失败';
+      setMessages((prev) =>
+        updateTargetAssistantMessage(prev, turnId, undefined, (msg) => ({
+          ...msg,
+          turnDone: true,
+          errorText: errMsg,
+          retryQuery: text,
+        }))
+      );
     }
   };
 
@@ -209,11 +307,23 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
 
     if (res.code === 200) {
       setMessages((prev) =>
-        prev.map((m) =>
-          m.interactiveCard?.actionId === actionId
-            ? { ...m, cardSubmitted: true, ticketId: res.ticketId }
-            : m
-        )
+        prev.map((m) => {
+          const matchesSingle = m.interactiveCard?.actionId === actionId;
+          const matchesList = m.interactiveCards?.some((c) => c.actionId === actionId);
+          if (!matchesSingle && !matchesList) {
+            return m;
+          }
+          const nextMap = {
+            ...(m.submittedCardMap || {}),
+            [actionId]: { submitted: true, ticketId: res.ticketId },
+          };
+          return {
+            ...m,
+            cardSubmitted: matchesSingle ? true : m.cardSubmitted,
+            ticketId: matchesSingle ? res.ticketId : m.ticketId,
+            submittedCardMap: nextMap,
+          };
+        })
       );
       return res.ticketId;
     } else {
@@ -397,15 +507,74 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
                 </div>
               )}
 
-              {/* 核心卡片：通用人机协同方案确认卡片 */}
-              {msg.role === 'assistant' && msg.interactiveCard && (
-                <InteractiveCard
-                  card={msg.interactiveCard}
-                  submitted={msg.cardSubmitted}
-                  ticketId={msg.ticketId}
-                  onSubmit={handleCardSubmit}
-                />
+              {/* 回合错误终态与一键重试入口 (F08 / T15) */}
+              {msg.role === 'assistant' && msg.errorText && (
+                <div
+                  style={{
+                    marginTop: msg.content ? '8px' : '0',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    lineHeight: '1.5',
+                    backgroundColor: '#fef2f2',
+                    color: '#991b1b',
+                    border: '1px solid #fecaca',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                  }}
+                >
+                  <div>⚠️ {msg.errorText}</div>
+                  {msg.retryQuery && !isStreaming && (
+                    <button
+                      type="button"
+                      onClick={() => handleSendMessage(msg.retryQuery)}
+                      style={{
+                        alignSelf: 'flex-start',
+                        padding: '4px 10px',
+                        fontSize: '12px',
+                        borderRadius: '6px',
+                        border: '1px solid #f87171',
+                        backgroundColor: '#ffffff',
+                        color: '#b91c1c',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      重试该提问
+                    </button>
+                  )}
+                </div>
               )}
+
+              {/* 核心卡片：支持同回合多张交互卡片按 actionId 独立渲染与提交状态管理 (F10 / T17) */}
+              {msg.role === 'assistant' &&
+                ((msg.interactiveCards && msg.interactiveCards.length > 0)
+                  ? msg.interactiveCards
+                  : msg.interactiveCard
+                    ? [msg.interactiveCard]
+                    : []
+                ).map((cardItem) => {
+                  const cardState = msg.submittedCardMap?.[cardItem.actionId];
+                  const isSubmitted = cardState
+                    ? cardState.submitted
+                    : msg.interactiveCard?.actionId === cardItem.actionId
+                      ? msg.cardSubmitted
+                      : false;
+                  const resolvedTicketId = cardState
+                    ? cardState.ticketId
+                    : msg.interactiveCard?.actionId === cardItem.actionId
+                      ? msg.ticketId
+                      : undefined;
+                  return (
+                    <InteractiveCard
+                      key={cardItem.actionId}
+                      card={cardItem}
+                      submitted={isSubmitted}
+                      ticketId={resolvedTicketId}
+                      onSubmit={handleCardSubmit}
+                    />
+                  );
+                })}
 
               {/* 推荐追问气泡 */}
               {msg.role === 'assistant' && msg.recommendQuestions && (
@@ -493,7 +662,13 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
           <input
             ref={inputRef}
             type="text"
-            placeholder={isStreaming ? 'AI 正在分析回复中...' : '输入 / 或 # 唤起指令，或输入诉求...'}
+            placeholder={
+              isStreaming
+                ? 'AI 正在分析回复中...'
+                : connectionState === 'connecting'
+                  ? '正在建立实时通道...'
+                  : '输入 / 或 # 唤起指令，或输入诉求...'
+            }
             disabled={isStreaming}
             value={inputQuery}
             onChange={(e) => handleInputChange(e.target.value)}
@@ -509,14 +684,20 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
           />
           <button
             onClick={() => handleSendMessage()}
-            disabled={isStreaming || !inputQuery.trim()}
+            disabled={isStreaming || !inputQuery.trim() || connectionState === 'connecting'}
             style={{
-              backgroundColor: isStreaming || !inputQuery.trim() ? '#cbd5e1' : '#2563eb',
+              backgroundColor:
+                isStreaming || !inputQuery.trim() || connectionState === 'connecting'
+                  ? '#cbd5e1'
+                  : '#2563eb',
               color: '#ffffff',
               border: 'none',
               borderRadius: '6px',
               padding: '6px 12px',
-              cursor: isStreaming || !inputQuery.trim() ? 'not-allowed' : 'pointer',
+              cursor:
+                isStreaming || !inputQuery.trim() || connectionState === 'connecting'
+                  ? 'not-allowed'
+                  : 'pointer',
               display: 'flex',
               alignItems: 'center',
               gap: '4px',
@@ -531,3 +712,4 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
     </div>
   );
 };
+

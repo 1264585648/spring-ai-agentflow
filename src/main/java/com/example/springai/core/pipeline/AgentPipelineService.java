@@ -2,16 +2,8 @@ package com.example.springai.core.pipeline;
 
 import com.example.springai.web.dto.ChatRequest;
 
-/**
- * 智能体流水线主服务接口
- * 负责串联: 上下文准备 ➔ 意图分级识别 ➔ 调度决策 ➔ 智能体执行 ➔ 异步后处理
- */
+/** 接收回合请求；输入 DTO 与传输适配的解耦属于后续架构阶段。 */
 public interface AgentPipelineService {
-
-    /**
-     * 异步驱动智能体流水线
-     *
-     * @param request 问答入参
-     */
     void process(ChatRequest request);
+    default boolean cancelActiveTurn(String sessionId) { return false; }
 }

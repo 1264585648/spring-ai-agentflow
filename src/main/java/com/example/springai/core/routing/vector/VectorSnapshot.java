@@ -43,6 +43,18 @@ public class VectorSnapshot {
      * @return 达到门槛的最佳候选，若无则返回 empty
      */
     public Optional<VectorCandidate> searchTop1(float[] queryVector, double threshold) {
+        return searchTop1(queryVector, threshold, null);
+    }
+
+    /**
+     * 极速检索 Top-1 匹配项（带模型空间隔离校验）
+     *
+     * @param queryVector   归一化后的用户 Query 向量
+     * @param threshold     最低置信度初筛门槛 (如 0.70)
+     * @param expectedModel 期望匹配的 Embedding 模型空间标识（若非空则强制要求同模型空间）
+     * @return 达到门槛的最佳候选，若无则返回 empty
+     */
+    public Optional<VectorCandidate> searchTop1(float[] queryVector, double threshold, String expectedModel) {
         if (items.isEmpty() || queryVector == null || queryVector.length == 0) {
             return Optional.empty();
         }
@@ -51,11 +63,10 @@ public class VectorSnapshot {
         FaqItem bestMatch = null;
 
         for (FaqItem item : items) {
-            float[] targetVector = item.vector();
-            if (targetVector.length != queryVector.length) {
-                continue; // 维度不匹配直接跳过，防止空间错乱
+            if (!isCompatibleSpace(item, queryVector, expectedModel)) {
+                continue;
             }
-            double score = VectorByteUtils.cosineSimilarity(queryVector, targetVector);
+            double score = VectorByteUtils.cosineSimilarity(queryVector, item.vector());
             if (score > maxScore) {
                 maxScore = score;
                 bestMatch = item;
@@ -72,17 +83,23 @@ public class VectorSnapshot {
      * 检索 Top-K 匹配项 (按相似度降序排列)
      */
     public List<VectorCandidate> searchTopK(float[] queryVector, int topK, double threshold) {
+        return searchTopK(queryVector, topK, threshold, null);
+    }
+
+    /**
+     * 检索 Top-K 匹配项 (按相似度降序排列，带模型空间隔离校验)
+     */
+    public List<VectorCandidate> searchTopK(float[] queryVector, int topK, double threshold, String expectedModel) {
         if (items.isEmpty() || queryVector == null || queryVector.length == 0 || topK <= 0) {
             return Collections.emptyList();
         }
 
         List<VectorCandidate> candidates = new ArrayList<>();
         for (FaqItem item : items) {
-            float[] targetVector = item.vector();
-            if (targetVector.length != queryVector.length) {
+            if (!isCompatibleSpace(item, queryVector, expectedModel)) {
                 continue;
             }
-            double score = VectorByteUtils.cosineSimilarity(queryVector, targetVector);
+            double score = VectorByteUtils.cosineSimilarity(queryVector, item.vector());
             if (score >= threshold) {
                 candidates.add(new VectorCandidate(item, score));
             }
@@ -93,5 +110,19 @@ public class VectorSnapshot {
             return candidates.subList(0, topK);
         }
         return candidates;
+    }
+
+    private boolean isCompatibleSpace(FaqItem item, float[] queryVector, String expectedModel) {
+        if (item == null || item.vector() == null || item.vector().length != queryVector.length) {
+            return false; // 维度不匹配直接跳过
+        }
+        String itemModel = item.embeddingModel();
+        if (itemModel == null || itemModel.isBlank() || "unknown".equalsIgnoreCase(itemModel.trim())) {
+            return false; // 隔离来源不明的向量
+        }
+        if (expectedModel != null && !expectedModel.isBlank()) {
+            return expectedModel.trim().equalsIgnoreCase(itemModel.trim());
+        }
+        return true;
     }
 }
