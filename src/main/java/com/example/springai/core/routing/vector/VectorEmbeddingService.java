@@ -17,4 +17,11 @@ public interface VectorEmbeddingService {
      * 向量维度
      */
     int dimensions();
+
+    /**
+     * 当前生成向量所属的模型空间标识（用于入库标记与跨空间隔离校验）
+     */
+    default String modelName() {
+        return "text-embedding-3-small";
+    }
 }

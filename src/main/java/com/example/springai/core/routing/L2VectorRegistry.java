@@ -77,6 +77,12 @@ public class L2VectorRegistry {
                         log.warn("[L2VectorRegistry] FAQ {} 缺少向量数据，跳过加载", entity.getFaqCode());
                         continue;
                     }
+                    if (entity.getEmbeddingModel() == null || entity.getEmbeddingModel().isBlank()
+                            || "unknown".equalsIgnoreCase(entity.getEmbeddingModel().trim())) {
+                        skippedCodes.add(entity.getFaqCode());
+                        log.warn("[L2VectorRegistry] FAQ {} 缺少可信 embeddingModel 标识，已隔离跳过加载", entity.getFaqCode());
+                        continue;
+                    }
 
                     // 统一归一化处理，确保点积等价于余弦相似度
                     float[] normalizedVector = VectorByteUtils.normalize(vector);
@@ -90,7 +96,7 @@ public class L2VectorRegistry {
                             entity.getStandardAnswer(),
                             entity.getTargetAgentCode(),
                             normalizedVector,
-                            entity.getEmbeddingModel(),
+                            entity.getEmbeddingModel().trim(),
                             entity.getDimension() != null ? entity.getDimension() : normalizedVector.length,
                             entity.getPriority() != null ? entity.getPriority() : 100
                     );
@@ -130,6 +136,16 @@ public class L2VectorRegistry {
     }
 
     /**
+     * 极速无锁检索 Top-1（强制校验模型空间一致性）
+     */
+    public Optional<VectorCandidate> searchTop1(float[] queryVector, double threshold, String expectedModel) {
+        if (queryVector == null || queryVector.length == 0) {
+            return Optional.empty();
+        }
+        return activeSnapshotHolder.get().searchTop1(queryVector, threshold, expectedModel);
+    }
+
+    /**
      * 极速无锁检索 Top-K
      */
     public List<VectorCandidate> searchTopK(float[] queryVector, int topK, double threshold) {
@@ -137,6 +153,16 @@ public class L2VectorRegistry {
             return Collections.emptyList();
         }
         return activeSnapshotHolder.get().searchTopK(queryVector, topK, threshold);
+    }
+
+    /**
+     * 极速无锁检索 Top-K（强制校验模型空间一致性）
+     */
+    public List<VectorCandidate> searchTopK(float[] queryVector, int topK, double threshold, String expectedModel) {
+        if (queryVector == null || queryVector.length == 0) {
+            return Collections.emptyList();
+        }
+        return activeSnapshotHolder.get().searchTopK(queryVector, topK, threshold, expectedModel);
     }
 
     /**

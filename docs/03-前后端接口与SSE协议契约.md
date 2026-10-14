@@ -75,27 +75,34 @@ sequenceDiagram
 ```json
 {
   "sessionId": "sess_88921a9f-4310",
-  "query": "我们在 spring-projects/spring-ai 仓库发现 Redis 连接池高并发泄漏，请协助建一个 Issue",
-  "userId": "DEV_OCTO_007",
-  "caseId": "spring-projects/spring-ai"
+  "turnId": "turn_1760410000_a1b2c3",
+  "query": "order-service 最近频繁出现 504 Gateway Timeout，请协助排查",
+  "userId": "SRE_ONCALL_01",
+  "caseId": "CASE_10086"
 }
 ```
 
   | 字段 | 必填 | 说明 |
   | :--- | :--- | :--- |
   | `sessionId` | 是 | 必须已通过 3.1 建立连接，否则下行事件会被丢弃 |
+  | `turnId` | 否 | 客户端预生成的回合唯一标识（用于消除首个 SSE 事件早于 HTTP 响应到达的竞态）；未传时由服务端自动分配并返回 |
   | `query` | 是 | 用户输入，不能为空 |
   | `userId` | 否 | 用户标识 |
   | `caseId` | 否 | 宿主页面上下文 ID（历史字段名）。📐 目标契约中改为通用的 `attributes: Map<String, Object>` 业务透传 |
 
 * **响应体**：
 ```json
-{ "code": 200, "message": "请求已提交处理", "sessionId": "sess_88921a9f-4310" }
+{
+  "code": 200,
+  "message": "请求已提交处理",
+  "sessionId": "sess_88921a9f-4310",
+  "turnId": "turn_1760410000_a1b2c3"
+}
 ```
 * **错误**：`sessionId` 或 `query` 为空返回 `400`。
 
 ### 3.3 一次性调试接口 ✅
-* **路径**：`GET /api/v1/chat/stream-ask?sessionId=&query=&caseId=`
+* **路径**：`GET /api/v1/chat/stream-ask?sessionId=&query=&caseId=&turnId=`
 * **说明**：建立连接与提问合并为一次请求，便于浏览器 / Postman 调试。生产前端应使用 3.1 + 3.2。
 
 ### 3.4 提交交互卡片 ✅
@@ -105,13 +112,12 @@ sequenceDiagram
 {
   "actionId": "act_9f8a32b14e9a",
   "sessionId": "sess_88921a9f-4310",
-  "cardType": "GITHUB_ISSUE_SUBMIT",
+  "cardType": "TROUBLESHOOT_ACTION",
   "formValues": {
-    "repo": "spring-projects/spring-ai",
-    "issue_type": "Bug Report",
-    "title": "[Bug]: Redis 连接池高并发下偶发泄漏问题",
-    "labels": "bug, high-priority, redis",
-    "body": "在高并发压测场景下，Redis 连接池句柄未被正确归还，导致连接池耗尽。"
+    "service": "order-service",
+    "action_type": "KILL_SLOW_SESSION",
+    "target_identifier": "trx_10423",
+    "reason": "HikariPool 连接池满，终止阻塞慢事务"
   }
 }
 ```
@@ -119,20 +125,21 @@ sequenceDiagram
 ```json
 {
   "code": 200,
-  "message": "GitHub Issue #1035 已在仓库 spring-projects/spring-ai 成功创建",
-  "ticketId": "#1035",
-  "cardType": "GITHUB_ISSUE_SUBMIT"
+  "message": "已在服务 [order-service] 执行应急处置 [KILL_SLOW_SESSION]",
+  "ticketId": "OPS-20261014-8821",
+  "cardType": "TROUBLESHOOT_ACTION"
 }
 ```
 * **错误码**：
 
   | 场景 | HTTP | `code` |
   | :--- | :--- | :--- |
-  | `actionId` 为空 / 无处理器支持该 `cardType` | 400 | 400 |
-  | 同一 `actionId` 在 10 分钟内重复提交 | 409 | 409 |
-  | 业务处理器返回失败或抛出异常（允许重试） | 500 | 500 |
+  | `actionId` 为空 / 未签发 / 已过期（15 分钟 TTL）/ 只读参数篡改 / 超出数值范围 | 400 | 400 |
+  | `sessionId` 缺失或跨会话越权提交他人 `actionId` | 403 | 403 |
+  | 同一 `actionId` 在执行中或已完成终态下重复提交 | 409 | 409 |
+  | 业务处理器返回失败或抛出异常（状态自动回退为 `ISSUED` 允许重试，幂等键防重） | 500 | 500 |
 
-* **服务端校验（📐 目标契约）**：提交时服务端必须校验 `actionId` 由服务端签发且属于该会话、卡片处于待提交状态、`editable=false` 字段未被篡改、可编辑字段满足 `minLimit` / `maxLimit` / `required`。当前实现只做 `actionId` 幂等（进程内、10 分钟 TTL），只读约束只在前端生效。
+* **服务端校验（✅ 已实现）**：提交时服务端强制校验 `actionId` 由服务端签发且属于当前非空 `sessionId`、卡片处于待提交状态且未超过 15 分钟有效期（TTL）、处理器按服务端签发记录中的 `cardType` 绑定路由、`editable=false` 只读字段未被篡改、可编辑字段满足 `minLimit` / `maxLimit` / `required`，并按白名单重建干净的执行参数（忽略客户端夹带的 `operator` 等未授权字段）。
 
 ### 3.5 快捷指令面板 ✅
 * **路径**：`GET /api/v1/commands/palette`
@@ -179,20 +186,20 @@ id: <timestamp>
 data: <JSON>
 
 ```
-`data` 即 `SsePacket.data` 的 JSON 序列化结果。📐 目标契约中每个事件的 `data` 额外携带 `turnId`，用于前端区分回合。
+`data` 即 `SsePacket.data` 的 JSON 序列化结果。每个回合内事件的 `data` 均自动携带 `turnId` 与单调递增序号 `sequence`（卡片回执事件额外携带 `actionId`），供前端按回合与卡片精确归属更新並做重放去重。
 
 ### 5.2 事件全集（8 类）✅
 
 | 事件 (`event`) | 产生时机 | `data` 结构 | 前端表现 |
 | :--- | :--- | :--- | :--- |
-| `thinking` | 智能体推理中 | `{content}` | 灰色折叠思考面板 |
-| `progress` | 规则命中、工具调用、检索时 | `{stage, description}` | 步骤条 / 轻提示 |
-| `message` | 正文文本流 | `{content}` | 打字机追加 Markdown |
-| `interactive_card` | 需要人工核验的方案 | `InteractiveCard` | 渲染交互卡片 |
-| `recommend_questions` | 回合结束前 | `{questions: string[]}` | 推荐追问气泡 |
-| `conversation_title` | 首轮对话后 | `{title}` | 更新会话标题 |
-| `done` | 回合结束 | `{status: "completed"}` | 停止加载、激活输入框 |
-| `error` | 处理异常 | `{message}` | 错误提示（连接保持，可继续提问） |
+| `thinking` | 智能体推理中 | `{content, turnId, sequence}` | 灰色折叠思考面板 |
+| `progress` | 规则命中、工具调用、检索时 | `{stage, description, turnId, sequence}` | 步骤条 / 轻提示 |
+| `message` | 正文文本流 / 卡片回执 | `{content, turnId, sequence, actionId?}` | 按 `turnId` / `actionId` 追加文本 |
+| `interactive_card` | 需要人工核验的方案 | `InteractiveCard (含 turnId)` | 按 `actionId` 挂载至对应回合 |
+| `recommend_questions` | 回合结束前 | `{questions: string[], turnId, sequence}` | 推荐追问气泡 |
+| `conversation_title` | 首轮对话后 | `{title, turnId, sequence}` | 更新会话标题 |
+| `done` | 回合结束 | `{status: "completed", turnId, sequence}` | 停止对应回合加载、激活输入框 |
+| `error` | 处理异常 / 限流 / 超时 | `{message, turnId, sequence}` | 回合进入错误终态并提供一键重试 |
 
 ### 5.3 Payload 样例
 

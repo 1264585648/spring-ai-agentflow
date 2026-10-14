@@ -31,6 +31,11 @@ public class CardRecord {
     private String sessionId;
 
     /**
+     * 绑定的对话回合标识 (TurnId，用于回执精确归属原回合)
+     */
+    private String turnId;
+
+    /**
      * 卡片业务类型 (如 TROUBLESHOOT_ACTION, IT_EQUIPMENT_APPLY)
      */
     private String cardType;
@@ -80,6 +85,13 @@ public class CardRecord {
      * 判断当前是否已超时失效
      */
     public boolean isExpired() {
-        return System.currentTimeMillis() > expireAt;
+        return isExpired(System.currentTimeMillis());
+    }
+
+    /**
+     * 基于可控时钟判断当前是否已超时失效
+     */
+    public boolean isExpired(long nowMillis) {
+        return nowMillis > expireAt;
     }
 }

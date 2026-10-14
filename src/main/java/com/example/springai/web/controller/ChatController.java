@@ -50,13 +50,18 @@ public class ChatController {
             return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "sessionId 或 query 不能为空"));
         }
 
+        if (!StringUtils.hasText(request.getTurnId())) {
+            request.setTurnId(java.util.UUID.randomUUID().toString());
+        }
+
         // 异步交给流水线编排服务处理 (流式事件通过 SseEmitter 回传)
         pipelineService.process(request);
 
         return ResponseEntity.ok(Map.of(
                 "code", 200,
                 "message", "请求已提交处理",
-                "sessionId", request.getSessionId()
+                "sessionId", request.getSessionId(),
+                "turnId", request.getTurnId()
         ));
     }
 
@@ -67,7 +72,8 @@ public class ChatController {
     public SseEmitter streamAsk(
             @RequestParam("sessionId") String sessionId,
             @RequestParam("query") String query,
-            @RequestParam(value = "caseId", required = false) String caseId) {
+            @RequestParam(value = "caseId", required = false) String caseId,
+            @RequestParam(value = "turnId", required = false) String turnId) {
 
         log.info("[ChatController] 收到单路体验请求, sessionId: {}, query: {}", sessionId, query);
         SseEmitter emitter = emitterManager.createEmitter(sessionId);
@@ -76,6 +82,7 @@ public class ChatController {
         request.setSessionId(sessionId);
         request.setQuery(query);
         request.setCaseId(caseId);
+        request.setTurnId(StringUtils.hasText(turnId) ? turnId : java.util.UUID.randomUUID().toString());
 
         pipelineService.process(request);
 

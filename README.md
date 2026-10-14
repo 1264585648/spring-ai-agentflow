@@ -20,28 +20,26 @@
 
 **终极目标**：业务方以依赖方式引入框架，只实现 `SubAgent` / `CardSubmitHandler` / `AgentHook` 等插头、在注册中心配置智能体元数据即可上线，底座零改动。
 
-仓库自带的参考业务（Demo）是 **GitHub 研发协同助手**，见 [01-系统架构全景与实施规划](./docs/01-系统架构全景与实施规划.md)。
+仓库自带的参考业务场景（Demo）是 **企业级智能运维与故障排障助手 (`TroubleshootSubAgent`)**，见 [08-智能运维排障架构与详细设计说明书](./docs/08-智能运维排障架构与详细设计说明书.md)。
 
 ---
 
-## 🚦 当前实现状态
+## 🚦 当前实现状态与边界说明
 
-> 里程碑 M0 已完成。完整矩阵与路线图见 [07-内核架构设计与演进路线](./docs/07-内核架构设计与演进路线.md)。
+> 完整能力状态矩阵、已知边界与演进路线见 [07-内核架构设计与演进路线](./docs/07-内核架构设计与演进路线.md) 与 [09-项目架构与代码审查报告](./docs/09-项目架构与代码审查报告-2026-10-13.md)。
 
-| 能力 | 状态 |
-| :--- | :---: |
-| SSE 事件协议（8 类事件）、长连接跨回合复用与心跳 | ✅ |
-| 交互卡片模型 + `CardSubmitHandler` SPI | ✅ |
-| L1 规则引擎（MySQL + 内存无锁快照 + 管理后台 + 热重载 + 集群同步） | ✅ |
-| L1 ➔ Spring AI `@Tool` 直通调用（白名单） | ✅ |
-| 智能体注册中心（Agent Hub）与按智能体隔离的 ChatClient | ✅ |
-| 前端工作台（ChatDrawer / 思考面板 / 交互卡片 / 推荐追问 / 快捷指令面板） | ✅ |
-| L3 大模型调用 | 🚧 已接入，但只走写死的 GitHub Issue 链路 |
-| MasterAgent 路由 | 🚧 `MasterAgentRouter` 已实现，尚未接入 Pipeline |
-| 流水线内核扩展点（`IntentResolver` / `SubAgent` / `AgentHook`） | 📐 设计中 |
-| L2 向量检索、会话记忆、卡片服务端状态机、多节点 SSE | 📐 规划中 |
-
-**下一步（M1）**：落地内核扩展点，把 GitHub Issue 链路改写为 `SubAgent` 插件，让 Demo 业务移出内核；随后（M2）把 MasterAgent 接入 Pipeline，实现按意图路由与流式 L3。
+| 能力 | 状态 | 边界说明 |
+| :--- | :---: | :--- |
+| SSE 事件协议（8 类事件、`turnId` + `sequence` 贯穿、重放去重） | ✅ 已验证 | 单机内存连接表，多节点需共享总线扩展 |
+| 交互卡片服务端状态机（`InMemoryCardRegistry` + 只读/范围/白名单重建 + 幂等键） | ✅ 已验证 | 15 分钟 TTL 与容量上限淘汰；当前为单机内存实现 |
+| 写操作安全边界（模型仅挂载只读查询 `@Tool`，写动作仅经卡片审批入口执行） | ✅ 已验证 | 默认适配器为 `MockOpsActionAdapter`（模拟执行） |
+| L1 规则引擎（MySQL + 内存无锁快照 + 管理后台 + 热重载 + 集群同步） | ✅ 已验证 | 支持静态直出与白名单只读 `@Tool` 直通 |
+| L2 语义向量缓存（`L2VectorRegistry` + 模型空间隔离 + Embedding 异常阻断） | ✅ 已验证 | 生产模式禁止异常时静默写入本地伪向量 |
+| L3 主调度路由（`MasterAgentRouter` + 多步 `StepResult` 证据传递 + `TroubleshootSubAgent`） | ✅ 已验证 | 当前 `MasterAgentRouter` 采用规则/关键词编排策略 |
+| 多轮会话短期记忆（`InMemoryConversationMemory` + `LlmQueryRewriter` + 统一 Prompt 组装） | ✅ 已验证 | 支持会话总数上限、空闲 TTL 淘汰与消息长度截断 |
+| 智能体注册中心（Agent Hub）与运行期配置生效（模型、温度、最小权限工具白名单） | ✅ 已验证 | 拒绝未知模型与未授权工具挂载 |
+| 前端工作台（连接状态与回合状态分离、HTTP/非JSON错误终态与重试、同回合多卡片管理） | ✅ 已验证 | `npm run build` 类型与构建核验通过 |
+| 数据面与管理面统一鉴权、多节点分布式状态持久化 | 📐 规划中 | 公网/生产环境发布前必须补齐可信认证与权限控制 |
 
 ---
 
@@ -63,7 +61,8 @@
 * 🧭 **[07-内核架构设计与演进路线](./docs/07-内核架构设计与演进路线.md)** *(现状、内核扩展点、模块拆分、里程碑)*
 * 🔌 **[03-前后端接口与SSE协议契约](./docs/03-前后端接口与SSE协议契约.md)** *(通信协议唯一事实标准)*
 * 🖥️ **[05-前端工程架构与组件设计说明书](./docs/05-前端工程架构与组件设计说明书.md)** *(前端工作台与抽屉)*
-* 📘 **[01-系统架构全景与实施规划](./docs/01-系统架构全景与实施规划.md)** *(参考业务蓝图：GitHub 研发协同)*
+* 🛠️ **[08-智能运维排障架构与详细设计说明书](./docs/08-智能运维排障架构与详细设计说明书.md)** *(参考业务：智能运维排障与应急止血)*
+* 🔍 **[09-项目架构与代码审查报告](./docs/09-项目架构与代码审查报告-2026-10-13.md)** *(架构审查、问题清单与验收矩阵)*
 * 🤖 **[04-企业多智能体职责矩阵与分层设计](./docs/04-企业多智能体职责矩阵与分层设计.md)** *(参考业务的多智能体分层)*
 * 📑 **[06-息流FlowUs-MCP集成指南](./docs/06-息流FlowUs-MCP集成指南.md)** *(MCP 网关集成)*
 * 📚 **[企业级 Multi-Agent 实战专栏与避坑手册](./docs/handbook/README.md)** *(AI Agent 专栏与避坑笔记)*
@@ -74,16 +73,15 @@
 
 ## 🛠️ 环境要求
 
-- **后端**：Java 21+，Maven 3.9+
+- **后端**：Java 17+（兼容 Java 17 / Java 21，与 `pom.xml` `java.version=17` 基线一致），Maven 3.9+
 - **前端**：Node.js 18+ (推荐 v20+ / v24+)，npm 9+
-- **依赖服务**：MySQL 8.0+（规则与智能体元数据存储）；Apollo 可选（仅多节点同步需要）
+- **依赖服务**：MySQL 8.0+（规则、FAQ 与智能体元数据存储）；Apollo 可选（仅多节点同步需要）
 
 ## 🚀 快速开始
 
-1. **初始化数据库**：执行 [`sql/init_schema.sql`](./sql/init_schema.sql)（默认库名 `enterprise_agent_db`）。
+1. **初始化数据库**：执行幂等安全的 [`sql/init_schema.sql`](./sql/init_schema.sql)（使用 `CREATE TABLE IF NOT EXISTS` 与 `INSERT IGNORE`，不会破坏已有数据；若需在本地 Demo 环境清空重建，请显式执行 [`sql/reset_demo_schema.sql`](./sql/reset_demo_schema.sql) 后再执行 `sql/init_schema.sql`）。
 2. **配置环境变量**：`MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DB`、`MYSQL_USER`、`MYSQL_PASSWORD`；如需真实大模型回答，再配置 `OPENAI_API_KEY`（可选 `OPENAI_BASE_URL`、`OPENAI_MODEL`）。也可写在未入库的 `application-local.yml` 中。仓库中不保存任何真实凭证（见 RULE-09）。
-3. **启动后端**：`mvn spring-boot:run`（默认端口 8080）。未配置 API Key 时，Demo 链路会降级为内置的专家兜底回答。
+3. **启动后端**：`mvn spring-boot:run`（默认端口 8080）。
 4. **启动前端**：`cd frontend && npm install && npm run dev`（默认端口 3000，`/api` 代理到 8080）。
-5. **体验**：输入 `/` 唤出快捷指令面板；试试 `/help`、`#ping`、`/repo spring-projects/spring-ai`，或直接描述一个仓库问题触发 Issue 卡片。
+5. **体验**：输入 `/` 唤出快捷指令面板；试试 `/help`、`#ping`、`/query user_id=10001`，或输入 `order-service 出现 504 网关超时，请协助排查` 体验多智能体诊断与应急止血确认卡片。
 
-> 📐 M4 里程碑完成后，Demo 模块将使用 H2 内嵌数据库，无需 MySQL 即可开箱体验。

@@ -92,7 +92,7 @@ class MultiTurnPipelineIntegrationTest {
 
         List<IntentResolver> resolvers = List.of(
                 new L1RuleResolver(l1RuleMatcher),
-                new L2VectorResolver(),
+                new L2VectorResolver(null, null),
                 new L3MasterAgentResolver(masterAgentRouter)
         );
 

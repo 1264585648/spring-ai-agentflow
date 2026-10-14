@@ -9,21 +9,47 @@ import org.springframework.stereotype.Component;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 开源仿真应急处置适配器 (MockOpsActionAdapter)
  * 职责:
  * 1. 响应 Human-in-the-loop 人工二次确认后的应急止血写操作；
  * 2. 模拟向运维网关或集群下发 Kill 慢查会话、动态扩容连接池指令；
- * 3. 产出规范运维工单号并输出带彩色标识的高可靠审计日志。
+ * 3. 产出规范运维工单号并输出带彩色标识的高可靠审计日志；
+ * 4. 支持按 idempotencyKey 幂等去重与执行结果反查。
  */
 @Component
 @ConditionalOnProperty(name = "troubleshoot.mode", havingValue = "mock", matchIfMissing = true)
 @Slf4j
 public class MockOpsActionAdapter implements OpsActionPort {
 
+    private final Map<String, OpsActionResult> executedRecords = new ConcurrentHashMap<>();
+
+    @Override
+    public Optional<OpsActionResult> findExecutedResult(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(executedRecords.get(idempotencyKey.trim()));
+    }
+
     @Override
     public OpsActionResult executeAction(OpsActionParam param) {
+        String idempotencyKey = (param != null && param.getIdempotencyKey() != null && !param.getIdempotencyKey().isBlank())
+                ? param.getIdempotencyKey().trim()
+                : null;
+        if (idempotencyKey != null) {
+            OpsActionResult existing = executedRecords.get(idempotencyKey);
+            if (existing != null) {
+                log.info("[SRE-AUDIT] 命中幂等执行记录，避免重复执行副作用: idempotencyKey={}, ticketId={}",
+                        idempotencyKey, existing.getTicketId());
+                return existing;
+            }
+        }
+
         String service = (param != null && param.getService() != null && !param.getService().isBlank())
                 ? param.getService().trim()
                 : "order-service";
@@ -55,11 +81,17 @@ public class MockOpsActionAdapter implements OpsActionPort {
         String auditMessage = String.format("应急止血指令已成功下发至网关！工单号: %s，目标服务: %s，执行动作: %s，目标标识: %s，操作人: %s。",
                 ticketId, service, actionType, targetIdentifier, operator);
 
-        return OpsActionResult.builder()
+        OpsActionResult result = OpsActionResult.builder()
                 .success(true)
                 .ticketId(ticketId)
                 .auditMessage(auditMessage)
                 .executedTimestamp(System.currentTimeMillis())
                 .build();
+
+        if (idempotencyKey != null) {
+            executedRecords.putIfAbsent(idempotencyKey, result);
+            return executedRecords.get(idempotencyKey);
+        }
+        return result;
     }
 }

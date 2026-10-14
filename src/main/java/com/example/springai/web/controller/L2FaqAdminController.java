@@ -83,9 +83,24 @@ public class L2FaqAdminController {
             return ResponseEntity.badRequest().body(ApiResponse.fail(400, "faqCode 已存在: " + request.getFaqCode()));
         }
 
-        // 1. 控制面单点计算 Embedding 向量
-        float[] vector = embeddingService.embed(request.getFaqTitle());
+        // 1. 控制面单点计算 Embedding 向量（若模型调用失败则阻断入库，严禁写入跨空间伪造向量）
+        float[] vector;
+        try {
+            vector = embeddingService.embed(request.getFaqTitle());
+        } catch (Exception ex) {
+            log.error("[L2Admin] 计算 FAQ Embedding 失败，已阻断入库: faqCode={}, reason={}",
+                    request.getFaqCode(), ex.getMessage());
+            return ResponseEntity.status(503)
+                    .body(ApiResponse.fail(503, "Embedding 向量计算失败，已阻断入库: " + ex.getMessage()));
+        }
+        if (vector == null || vector.length == 0) {
+            return ResponseEntity.status(503)
+                    .body(ApiResponse.fail(503, "Embedding 向量为空，已阻断入库"));
+        }
         byte[] vectorBytes = VectorByteUtils.toBytes(vector);
+        String actualModel = StringUtils.hasText(embeddingService.modelName())
+                ? embeddingService.modelName().trim()
+                : "text-embedding-3-small";
 
         FaqDefinitionEntity entity = new FaqDefinitionEntity();
         entity.setFaqCode(request.getFaqCode());
@@ -94,7 +109,7 @@ public class L2FaqAdminController {
         entity.setStandardAnswer(request.getStandardAnswer());
         entity.setTargetAgentCode(request.getTargetAgentCode());
         entity.setEmbeddingVector(vectorBytes);
-        entity.setEmbeddingModel("text-embedding-3-small");
+        entity.setEmbeddingModel(actualModel);
         entity.setDimension(vector.length);
         entity.setPriority(request.getPriority() != null ? request.getPriority() : 100);
         entity.setIsEnabled(request.getIsEnabled() != null ? request.getIsEnabled() : 1);

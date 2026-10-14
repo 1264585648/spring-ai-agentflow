@@ -22,37 +22,66 @@ import java.security.MessageDigest;
 public class DefaultVectorEmbeddingService implements VectorEmbeddingService {
 
     public static final int DEFAULT_DIMENSION = 1536;
+    public static final String DEFAULT_COMMERCIAL_MODEL = "text-embedding-3-small";
+    public static final String LOCAL_DETERMINISTIC_MODEL = "local-deterministic-md5-ngram-v1";
 
     private final EmbeddingModel embeddingModel;
+    private final String configuredModelName;
+    private final boolean localFallbackEnabled;
 
     @Autowired
-    public DefaultVectorEmbeddingService(@Autowired(required = false) EmbeddingModel embeddingModel) {
+    public DefaultVectorEmbeddingService(
+            @Autowired(required = false) EmbeddingModel embeddingModel,
+            @org.springframework.beans.factory.annotation.Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String configuredModelName,
+            @org.springframework.beans.factory.annotation.Value("${agent.l2.embedding.local-fallback-enabled:true}") boolean localFallbackEnabled) {
         this.embeddingModel = embeddingModel;
+        this.configuredModelName = StringUtils.hasText(configuredModelName)
+                ? configuredModelName.trim()
+                : DEFAULT_COMMERCIAL_MODEL;
+        this.localFallbackEnabled = localFallbackEnabled;
         if (embeddingModel != null) {
-            log.info("[EmbeddingService] 成功装配 Spring AI EmbeddingModel: {}", embeddingModel.getClass().getSimpleName());
+            log.info("[EmbeddingService] 成功装配 Spring AI EmbeddingModel: {}, modelName={}",
+                    embeddingModel.getClass().getSimpleName(), this.configuredModelName);
+        } else if (localFallbackEnabled) {
+            log.warn("[EmbeddingService] 未检测到商业 EmbeddingModel Bean，启用受控本地模拟投影空间: {}", LOCAL_DETERMINISTIC_MODEL);
         } else {
-            log.warn("[EmbeddingService] 未检测到商业 EmbeddingModel Bean，将启用本地确定性模拟投影兜底");
+            log.warn("[EmbeddingService] 未检测到商业 EmbeddingModel Bean 且已禁用本地模拟投影");
         }
+    }
+
+    public DefaultVectorEmbeddingService(EmbeddingModel embeddingModel) {
+        this(embeddingModel, DEFAULT_COMMERCIAL_MODEL, true);
+    }
+
+    public DefaultVectorEmbeddingService(EmbeddingModel embeddingModel, boolean localFallbackEnabled) {
+        this(embeddingModel, DEFAULT_COMMERCIAL_MODEL, localFallbackEnabled);
     }
 
     @Override
     public float[] embed(String text) {
         if (!StringUtils.hasText(text)) {
-            return new float[DEFAULT_DIMENSION];
+            return new float[dimensions()];
         }
 
+        // 已配置真实商业模型时：失败必须显式抛出异常，严禁静默降级为本地 MD5 假向量污染索引空间
         if (embeddingModel != null) {
             try {
                 float[] result = embeddingModel.embed(text);
-                if (result != null && result.length > 0) {
-                    return VectorByteUtils.normalize(result);
+                if (result == null || result.length == 0) {
+                    throw new IllegalStateException("商业 EmbeddingModel 返回空向量");
                 }
+                return VectorByteUtils.normalize(result);
             } catch (Exception ex) {
-                log.warn("[EmbeddingService] 调用商业 EmbeddingModel 异常，降级至本地确定性投影: {}", ex.getMessage());
+                log.error("[EmbeddingService] 调用商业 EmbeddingModel 失败，拒绝伪造本地向量: {}", ex.getMessage());
+                throw new IllegalStateException("Embedding 模型调用失败: " + ex.getMessage(), ex);
             }
         }
 
-        // 本地确定性哈希投影 (离线与单元测试保障)
+        if (!localFallbackEnabled) {
+            throw new IllegalStateException("未配置可用 EmbeddingModel，且已禁用本地模拟向量兜底");
+        }
+
+        // 仅在无商业模型且显式允许本地模拟（离线 Demo / 单元测试）时使用独立模型空间的确定性投影
         return generateDeterministicVector(text, DEFAULT_DIMENSION);
     }
 
@@ -66,6 +95,14 @@ public class DefaultVectorEmbeddingService implements VectorEmbeddingService {
             }
         }
         return DEFAULT_DIMENSION;
+    }
+
+    @Override
+    public String modelName() {
+        if (embeddingModel != null) {
+            return configuredModelName;
+        }
+        return LOCAL_DETERMINISTIC_MODEL;
     }
 
     /**

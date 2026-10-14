@@ -58,12 +58,12 @@ public class CardInteractionController {
 
     @PostMapping("/submit")
     public ResponseEntity<Map<String, Object>> submitCard(@RequestBody CardSubmitRequest request) {
-        log.info("[CardController] 收到卡片确认提交请求, actionId: {}, sessionId: {}, cardType: {}",
-                request.getActionId(), request.getSessionId(), request.getCardType());
-
-        if (!StringUtils.hasText(request.getActionId())) {
+        if (request == null || !StringUtils.hasText(request.getActionId())) {
             return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "actionId 不能为空"));
         }
+
+        log.info("[CardController] 收到卡片确认提交请求, actionId: {}, sessionId: {}, clientCardType: {}",
+                request.getActionId(), request.getSessionId(), request.getCardType());
 
         // 1. 状态机申领与会话归属校验 (ISSUED ➔ SUBMITTING)
         CardRecord record;
@@ -83,7 +83,7 @@ public class CardInteractionController {
                     .body(Map.of("code", 409, "message", ex.getMessage()));
         }
 
-        // 2. 只读字段防篡改与合规审计
+        // 2. 只读字段防篡改、必填与数值范围合规审计
         try {
             cardRegistry.validate(record, request.getFormValues());
         } catch (CardSecurityException ex) {
@@ -98,22 +98,34 @@ public class CardInteractionController {
                     .body(Map.of("code", 400, "message", ex.getMessage()));
         }
 
-        // 3. 匹配对应的 SPI 处理器
+        // 3. 基于服务端签发记录恢复可信类型与白名单参数，拒绝客户端伪造 cardType 或注入未声明字段
+        String effectiveCardType = StringUtils.hasText(record.getCardType())
+                ? record.getCardType()
+                : request.getCardType();
+        Map<String, Object> safeFormValues = cardRegistry.reconstructSafeFormValues(record, request.getFormValues());
+        CardSubmitRequest sanitizedRequest = new CardSubmitRequest(
+                record.getActionId(),
+                record.getSessionId(),
+                effectiveCardType,
+                safeFormValues
+        );
+
+        // 4. 严格按服务端签发的卡片类型匹配 SPI 处理器
         CardSubmitHandler matchedHandler = handlers.stream()
-                .filter(h -> h.supports(request.getCardType()))
+                .filter(h -> h.supports(effectiveCardType))
                 .findFirst()
                 .orElse(null);
 
         if (matchedHandler == null) {
-            log.error("[CardController] 未找到支持该卡片类型的处理器: {}", request.getCardType());
-            cardRegistry.fail(request.getActionId(), "不支持的卡片类型: " + request.getCardType(), true);
-            return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "不支持的卡片类型: " + request.getCardType()));
+            log.error("[CardController] 未找到支持该卡片类型的处理器: {}", effectiveCardType);
+            cardRegistry.fail(request.getActionId(), "不支持的卡片类型: " + effectiveCardType, true);
+            return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "不支持的卡片类型: " + effectiveCardType));
         }
 
-        // 4. 执行业务逻辑
+        // 5. 执行业务逻辑
         CardSubmitResult result;
         try {
-            result = matchedHandler.handleSubmit(request);
+            result = matchedHandler.handleSubmit(sanitizedRequest);
         } catch (Exception ex) {
             log.error("[CardController] 卡片提交处理异常, actionId: {}", request.getActionId(), ex);
             cardRegistry.fail(request.getActionId(), "卡片提交异常: " + ex.getMessage(), true);
@@ -126,20 +138,31 @@ public class CardInteractionController {
             return ResponseEntity.internalServerError().body(Map.of("code", 500, "message", message));
         }
 
-        // 5. 成功流转为终态 SUBMITTED 并归档单号
+        // 6. 成功流转为终态 SUBMITTED 并归档单号
         cardRegistry.complete(request.getActionId(), result);
 
-        // 6. 若关联的 SSE 会话保持中，主动向流追加一条确认提示
-        if (request.getSessionId() != null) {
-            ssePublisher.sendMessage(request.getSessionId(),
-                    "\n\n> ✅ **表单已确认提交！**\n> 关联流程单号：`" + result.getTicketId() + "`\n");
+        // 7. 若关联的 SSE 会话保持中，按原卡片所属 turnId 与 actionId 精确发送确认回执（不串入新回合）
+        String ownerSessionId = StringUtils.hasText(record.getSessionId()) ? record.getSessionId() : request.getSessionId();
+        if (StringUtils.hasText(ownerSessionId) && ssePublisher != null) {
+            String receiptText = "\n\n> ✅ **表单已确认提交！**\n> 关联流程单号：`" + result.getTicketId() + "`\n";
+            ssePublisher.sendCardReceipt(
+                    ownerSessionId,
+                    record.getTurnId(),
+                    record.getActionId(),
+                    result.getTicketId(),
+                    receiptText
+            );
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("code", 200);
         body.put("message", result.getMessage() != null ? result.getMessage() : "");
         body.put("ticketId", result.getTicketId() != null ? result.getTicketId() : "");
-        body.put("cardType", request.getCardType() != null ? request.getCardType() : "");
+        body.put("cardType", effectiveCardType != null ? effectiveCardType : "");
+        body.put("actionId", record.getActionId());
+        if (StringUtils.hasText(record.getTurnId())) {
+            body.put("turnId", record.getTurnId());
+        }
         return ResponseEntity.ok(body);
     }
 }

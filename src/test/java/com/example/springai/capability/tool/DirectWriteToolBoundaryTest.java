@@ -73,7 +73,9 @@ class DirectWriteToolBoundaryTest {
     @BeforeEach
     void setUp() {
         chatModel = mock(ChatModel.class);
-        when(chatModel.getDefaultOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        ToolCallingChatOptions options = ToolCallingChatOptions.builder().build();
+        when(chatModel.getDefaultOptions()).thenReturn(options);
+        when(chatModel.getOptions()).thenReturn(options);
         when(chatModel.stream(any(Prompt.class))).thenReturn(Flux.just(
                 new ChatResponse(List.of(new Generation(new AssistantMessage(ANALYSIS))))));
 

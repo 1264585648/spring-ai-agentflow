@@ -35,6 +35,7 @@ public class AgentPromptRegistry {
     private final AtomicReference<Map<String, AgentDefinition>> registrySnapshot =
             new AtomicReference<>(Collections.emptyMap());
 
+    @Autowired
     public AgentPromptRegistry(@Autowired(required = false) AgentDefinitionRepository agentRepository) {
         this.agentRepository = agentRepository;
     }
@@ -251,6 +252,7 @@ public class AgentPromptRegistry {
                 .isSystemCore(1)
                 .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
+                .version(1)
                 .dispatchDesc("负责多轮运维协同会话指代消除、提取关键服务名、TraceID与故障单号，输出规范查询")
                 .description(AgentType.QUERY_REWRITER.getDescription())
                 .systemPrompt("""
@@ -274,6 +276,7 @@ public class AgentPromptRegistry {
                 .isSystemCore(1)
                 .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
+                .version(1)
                 .dispatchDesc("负责复杂任务与故障依赖拆解、子专家协同调度与多源分析结果聚合")
                 .description(AgentType.MASTER_AGENT.getDescription())
                 .systemPrompt("""
@@ -295,6 +298,7 @@ public class AgentPromptRegistry {
                 .isSystemCore(1)
                 .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
+                .version(1)
                 .dispatchDesc("负责通用技术问答、框架功能说明与未命中特定专家时的兜底解答")
                 .description(AgentType.GENERAL_AGENT.getDescription())
                 .systemPrompt("""
@@ -313,7 +317,8 @@ public class AgentPromptRegistry {
                 .isSystemCore(0)
                 .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
-                .attachedTools("[]")
+                .version(1)
+                .attachedTools("[\"logQueryTool\"]")
                 .dispatchDesc("负责微服务日志检索、异常堆栈解析、Trace 分布式链路追踪与已知报错排查")
                 .description(AgentType.LOG_DIAGNOSE_AGENT.getDescription())
                 .systemPrompt("""
@@ -335,7 +340,8 @@ public class AgentPromptRegistry {
                 .isSystemCore(0)
                 .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
-                .attachedTools("[]")
+                .version(1)
+                .attachedTools("[\"databaseDiagnoseTool\"]")
                 .dispatchDesc("负责数据库慢SQL检索、死锁与长事务分析、连接池水位诊断与性能调优建议")
                 .description(AgentType.DB_DIAGNOSE_AGENT.getDescription())
                 .systemPrompt("""
@@ -357,7 +363,8 @@ public class AgentPromptRegistry {
                 .isSystemCore(0)
                 .status(AgentStatus.ONLINE.name())
                 .isEnabled(1)
-                .attachedTools("[]")
+                .version(1)
+                .attachedTools("[\"logQueryTool\", \"databaseDiagnoseTool\"]")
                 .dispatchDesc("负责故障综合研判、制定应急止血处置方案、装配确认卡片并引导工程师核验执行")
                 .description(AgentType.SRE_COPILOT_AGENT.getDescription())
                 .systemPrompt("""

@@ -11,6 +11,7 @@ import com.example.springai.core.routing.vector.VectorCandidate;
 import com.example.springai.core.routing.vector.VectorEmbeddingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -40,13 +41,7 @@ public class L2VectorResolver implements IntentResolver {
     private final L2VectorRegistry vectorRegistry;
     private final VectorEmbeddingService embeddingService;
 
-    /**
-     * 兼容性构造器：供无参或轻量级测试使用
-     */
-    public L2VectorResolver() {
-        this(null, null);
-    }
-
+    @Autowired
     public L2VectorResolver(L2VectorRegistry vectorRegistry, VectorEmbeddingService embeddingService) {
         this.vectorRegistry = vectorRegistry;
         this.embeddingService = embeddingService;
@@ -83,10 +78,23 @@ public class L2VectorResolver implements IntentResolver {
         }
 
         long startTime = System.currentTimeMillis();
-        float[] queryVector = embeddingService.embed(query);
+        float[] queryVector;
+        try {
+            queryVector = embeddingService.embed(query);
+        } catch (Exception ex) {
+            log.warn("[L2VectorResolver] Embedding 计算异常，跳过 L2 检索并平滑放行至 L3: {}", ex.getMessage());
+            return Optional.empty();
+        }
+        if (queryVector == null || queryVector.length == 0) {
+            return Optional.empty();
+        }
 
-        // 1. 本地内存快照检索 Top-1 (初筛门槛 0.70)
-        Optional<VectorCandidate> matchOpt = vectorRegistry.searchTop1(queryVector, MEDIUM_CONFIDENCE_THRESHOLD);
+        String queryModel = embeddingService.modelName();
+
+        // 1. 本地内存快照检索 Top-1 (初筛门槛 0.70，强制校验同模型空间)
+        Optional<VectorCandidate> matchOpt = StringUtils.hasText(queryModel)
+                ? vectorRegistry.searchTop1(queryVector, MEDIUM_CONFIDENCE_THRESHOLD, queryModel)
+                : vectorRegistry.searchTop1(queryVector, MEDIUM_CONFIDENCE_THRESHOLD);
         if (matchOpt.isEmpty()) {
             log.debug("[L2VectorResolver] 未命中达到中置信度阈值的 FAQ，耗时: {}ms，放行至 L3",
                     System.currentTimeMillis() - startTime);
@@ -94,8 +102,14 @@ public class L2VectorResolver implements IntentResolver {
         }
 
         VectorCandidate candidate = matchOpt.get();
-        double score = candidate.score();
         FaqItem faq = candidate.item();
+        if (StringUtils.hasText(queryModel) && StringUtils.hasText(faq.embeddingModel())
+                && !queryModel.trim().equalsIgnoreCase(faq.embeddingModel().trim())) {
+            log.warn("[L2VectorResolver] 拦截跨模型空间匹配: queryModel={}, faqModel={}, faqCode={}",
+                    queryModel, faq.embeddingModel(), faq.faqCode());
+            return Optional.empty();
+        }
+        double score = candidate.score();
         long cost = System.currentTimeMillis() - startTime;
 
         // 2. 高置信度 (>= 0.88): 极速短路直出标准答案，零模型调用

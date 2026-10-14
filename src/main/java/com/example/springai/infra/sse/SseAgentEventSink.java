@@ -19,6 +19,7 @@ import java.util.List;
 public class SseAgentEventSink implements AgentEventSink {
 
     private final String sessionId;
+    private final String turnId;
     private final SseEventPublisher publisher;
     private final CardRegistry cardRegistry;
     private final ConversationMemory conversationMemory;
@@ -27,37 +28,64 @@ public class SseAgentEventSink implements AgentEventSink {
 
     public SseAgentEventSink(
             String sessionId,
+            String turnId,
             SseEventPublisher publisher,
             CardRegistry cardRegistry,
             ConversationMemory conversationMemory,
             String originalQuery) {
         this.sessionId = sessionId;
+        this.turnId = turnId;
         this.publisher = publisher;
         this.cardRegistry = cardRegistry;
         this.conversationMemory = conversationMemory;
         this.originalQuery = originalQuery;
+        if (this.publisher != null && StringUtils.hasText(sessionId) && StringUtils.hasText(turnId)) {
+            this.publisher.bindTurn(sessionId, turnId);
+        }
+    }
+
+    public SseAgentEventSink(
+            String sessionId,
+            SseEventPublisher publisher,
+            CardRegistry cardRegistry,
+            ConversationMemory conversationMemory,
+            String originalQuery) {
+        this(sessionId, null, publisher, cardRegistry, conversationMemory, originalQuery);
     }
 
     public SseAgentEventSink(String sessionId, SseEventPublisher publisher, CardRegistry cardRegistry) {
-        this(sessionId, publisher, cardRegistry, null, null);
+        this(sessionId, null, publisher, cardRegistry, null, null);
     }
 
     public SseAgentEventSink(String sessionId, SseEventPublisher publisher) {
-        this(sessionId, publisher, null, null, null);
+        this(sessionId, null, publisher, null, null, null);
+    }
+
+    private boolean isTurnSuperseded() {
+        return publisher != null && StringUtils.hasText(turnId) && publisher.isStaleTurn(sessionId, turnId);
     }
 
     @Override
     public boolean thinking(String content) {
+        if (isTurnSuperseded()) {
+            return false;
+        }
         return publisher.sendThinking(sessionId, content);
     }
 
     @Override
     public boolean progress(String stage, String description) {
+        if (isTurnSuperseded()) {
+            return false;
+        }
         return publisher.sendProgress(sessionId, stage, description);
     }
 
     @Override
     public boolean message(String chunk) {
+        if (isTurnSuperseded()) {
+            return false;
+        }
         if (chunk != null) {
             messageAccumulator.append(chunk);
         }
@@ -66,7 +94,13 @@ public class SseAgentEventSink implements AgentEventSink {
 
     @Override
     public boolean card(InteractiveCard card) {
+        if (isTurnSuperseded()) {
+            return false;
+        }
         if (card != null) {
+            if (!StringUtils.hasText(card.getTurnId()) && StringUtils.hasText(turnId)) {
+                card.setTurnId(turnId);
+            }
             if (cardRegistry != null) {
                 cardRegistry.issue(sessionId, card);
             }
@@ -79,23 +113,44 @@ public class SseAgentEventSink implements AgentEventSink {
 
     @Override
     public boolean recommend(List<String> questions) {
+        if (isTurnSuperseded()) {
+            return false;
+        }
         return publisher.sendRecommendQuestions(sessionId, questions);
     }
 
     @Override
     public boolean done() {
-        if (conversationMemory != null && StringUtils.hasText(originalQuery)) {
-            conversationMemory.append(sessionId, ConversationMessage.user(originalQuery));
-            String fullReply = messageAccumulator.toString().trim();
-            if (StringUtils.hasText(fullReply)) {
-                conversationMemory.append(sessionId, ConversationMessage.assistant(fullReply));
+        if (isTurnSuperseded()) {
+            return false;
+        }
+        try {
+            if (conversationMemory != null && StringUtils.hasText(originalQuery)) {
+                conversationMemory.append(sessionId, ConversationMessage.user(originalQuery));
+                String fullReply = messageAccumulator.toString().trim();
+                if (StringUtils.hasText(fullReply)) {
+                    conversationMemory.append(sessionId, ConversationMessage.assistant(fullReply));
+                }
+            }
+            return publisher.sendDone(sessionId);
+        } finally {
+            if (publisher != null) {
+                publisher.unbindTurn(sessionId, turnId);
             }
         }
-        return publisher.sendDone(sessionId);
     }
 
     @Override
     public boolean error(String message) {
-        return publisher.sendError(sessionId, message);
+        if (isTurnSuperseded()) {
+            return false;
+        }
+        try {
+            return publisher.sendError(sessionId, message);
+        } finally {
+            if (publisher != null) {
+                publisher.unbindTurn(sessionId, turnId);
+            }
+        }
     }
 }

@@ -51,4 +51,26 @@ public class InteractiveCard {
      * 取消按钮文本 (默认: "放弃")
      */
     private String cancelButtonText = "放弃";
+
+    /**
+     * 所属对话回合标识 (TurnId，用于前后端跨回合精确归属)
+     */
+    private String turnId;
+
+    public InteractiveCard(
+            String actionId,
+            String cardType,
+            String title,
+            String description,
+            List<CardFormField> fields,
+            String confirmButtonText,
+            String cancelButtonText) {
+        this.actionId = actionId;
+        this.cardType = cardType;
+        this.title = title;
+        this.description = description;
+        this.fields = fields != null ? fields : new ArrayList<>();
+        this.confirmButtonText = confirmButtonText;
+        this.cancelButtonText = cancelButtonText;
+    }
 }

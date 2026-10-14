@@ -38,4 +38,9 @@ public class OpsActionParam {
      * 操作工程师标识 (必填审计字段)
      */
     private String operator;
+
+    /**
+     * 幂等执行键 (绑定卡片 actionId，防止重试或超时导致重复执行外部副作用)
+     */
+    private String idempotencyKey;
 }

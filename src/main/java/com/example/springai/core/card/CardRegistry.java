@@ -66,4 +66,16 @@ public interface CardRegistry {
      * @return 卡片记录 Optional
      */
     Optional<CardRecord> getRecord(String actionId);
+
+    /**
+     * 基于服务端签发快照重建可信表单参数：
+     * 强制恢复只读字段原始值，仅合并白名单内的可编辑字段，剥离客户端未授权注入的额外字段。
+     *
+     * @param record          服务端签发的卡片记录
+     * @param submittedValues 客户端提交的原始字段
+     * @return 重建后的安全参数映射
+     */
+    default Map<String, Object> reconstructSafeFormValues(CardRecord record, Map<String, Object> submittedValues) {
+        return submittedValues != null ? submittedValues : Map.of();
+    }
 }

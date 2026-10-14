@@ -100,7 +100,8 @@ class CardInteractionControllerTest {
         InteractiveCard card = buildSampleCard("act-ops-101");
         cardRegistry.issue("sess-ops-1", card);
 
-        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler();
+        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler(
+                new com.example.springai.capability.ops.mock.MockOpsActionAdapter());
         CardInteractionController controller = new CardInteractionController(
                 List.of(handler), ssePublisher, cardRegistry);
 
@@ -126,7 +127,8 @@ class CardInteractionControllerTest {
         InteractiveCard card = buildSampleCard("act-tamper-1");
         cardRegistry.issue("sess-1", card);
 
-        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler();
+        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler(
+                new com.example.springai.capability.ops.mock.MockOpsActionAdapter());
         CardInteractionController controller = new CardInteractionController(
                 List.of(handler), ssePublisher, cardRegistry);
 
@@ -149,7 +151,8 @@ class CardInteractionControllerTest {
     @Test
     @DisplayName("测试伪造未下发的 actionId 提交被拒绝返回 400")
     void testUnissuedActionIdReturns400() {
-        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler();
+        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler(
+                new com.example.springai.capability.ops.mock.MockOpsActionAdapter());
         CardInteractionController controller = new CardInteractionController(
                 List.of(handler), ssePublisher, cardRegistry);
 
@@ -169,7 +172,8 @@ class CardInteractionControllerTest {
         InteractiveCard card = buildSampleCard("act-user-A");
         cardRegistry.issue("session-user-A", card);
 
-        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler();
+        OpsActionCardSubmitHandler handler = new OpsActionCardSubmitHandler(
+                new com.example.springai.capability.ops.mock.MockOpsActionAdapter());
         CardInteractionController controller = new CardInteractionController(
                 List.of(handler), ssePublisher, cardRegistry);
 
