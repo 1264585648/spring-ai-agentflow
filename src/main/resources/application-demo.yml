@@ -1,0 +1,12 @@
+# 显式本机演示配置。不要通过反向代理向公网或其他用户转发此 profile。
+# 仅连接演示数据库；真实认证使用容器 Principal + WebAccessPolicy，写权限另接 ActionAuthorizer。
+server:
+  address: 127.0.0.1
+troubleshoot:
+  mode: mock
+agentflow:
+  access:
+    local-demo-enabled: true
+  actions:
+    allow-mock-submissions: true
+    real-writes-enabled: false

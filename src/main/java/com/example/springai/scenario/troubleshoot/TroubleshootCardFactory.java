@@ -1,17 +1,27 @@
 package com.example.springai.scenario.troubleshoot;
 
+import com.example.springai.capability.database.port.DatabaseDiagnosePort;
+import com.example.springai.capability.log.port.LogQueryPort;
 import com.example.springai.core.card.action.CardFormValues;
 import com.example.springai.core.card.model.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import java.util.*;
 
-/** 展示参数与可执行参数使用同一 schema，并保留证据来源标记。 */
+/** 展示与执行共用 schema；实际证据适配器是 Mock 时，在线 LLM 也不能洗掉模拟标记。 */
 @Component
 public class TroubleshootCardFactory {
+    private final boolean evidenceSimulation;
+    @Autowired
+    public TroubleshootCardFactory(LogQueryPort logs,DatabaseDiagnosePort database) {
+        evidenceSimulation=logs==null || database==null || logs.isSimulation() || database.isSimulation();
+    }
+    /** 无证据提供方的手动构造仅供演示，不生成可用于真实执行的证据标记。 */
+    public TroubleshootCardFactory() { this(null,null); }
     public InteractiveCard createTroubleshootCard(ActionProposal proposal) {
         if(proposal==null || !proposal.hasExecutableTarget()) throw new IllegalArgumentException("service、actionType、targetIdentifier 必须明确");
         var card=new InteractiveCard(); card.setActionId("act_"+UUID.randomUUID()); card.setCardType("TROUBLESHOOT_ACTION");
-        card.setSimulation(proposal.isSimulationMode());
+        card.setSimulation(evidenceSimulation || proposal.isSimulationMode());
         card.setTitle("智能运维处置确认单"+(card.isSimulation()?" [演示模拟]":""));
         card.setDescription((card.isSimulation()?"【演示模拟数据】":"")+"以下只是待核验提案，提交前请核对目标与影响范围。");
         card.getFields().add(new CardFormField("service","目标服务","text",proposal.getService().trim(),false,true));
