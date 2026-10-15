@@ -26,6 +26,8 @@ jobs:
           mvn -B --no-transfer-progress test > /tmp/agentflow-maven.log 2>&1
           result=$?
           set -e
+          mkdir -p target/ci-logs
+          cp /tmp/agentflow-maven.log target/ci-logs/maven.log
           python3 - <<'PY'
           from pathlib import Path
           lines = Path('/tmp/agentflow-maven.log').read_text(errors='replace').splitlines()
@@ -41,6 +43,16 @@ jobs:
           print('\n'.join(lines[-65:]))
           PY
           exit "$result"
+      - name: Preserve full Maven output and test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-test-evidence
+          path: |
+            target/ci-logs/
+            target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 7
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
