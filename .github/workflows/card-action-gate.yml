@@ -35,6 +35,12 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      - run: npx tsc --strict --target ES2022 --module commonjs --lib ES2022,DOM --outDir /tmp/agentflow-client-tests src/api/sseClient.ts
-      - run: CARD_CLIENT_JS=/tmp/agentflow-client-tests/api/sseClient.js node --test tests/client-regression.test.cjs
+      - run: npx tsc --strict --target ES2022 --module commonjs --lib ES2022,DOM --outDir /tmp/agentflow-client-tests src/api/sseClient.ts src/api/turnCancellation.ts
+      - run: CARD_CLIENT_JS=/tmp/agentflow-client-tests/api/sseClient.js node --test tests/client-regression.test.cjs tests/turn-client-regression.test.cjs
       - run: npm run build
+      - name: Type-check browser test entry
+        run: npx tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --jsx react-jsx --lib ES2022,DOM --esModuleInterop --skipLibCheck tests/chat-drawer-regression.tsx
+      - name: Build isolated mounted-component regression page
+        run: npx vite build --config vite.regression.config.ts
+      - name: Real Chrome lifecycle regressions (no mock React and no skip)
+        run: python3 tests/run-browser-regression.py
