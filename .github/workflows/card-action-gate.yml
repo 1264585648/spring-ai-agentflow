@@ -20,7 +20,27 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Compile and run all tests (no skip or curated exclusion)
-        run: mvn -B --no-transfer-progress test
+        shell: bash
+        run: |
+          set +e
+          mvn -B --no-transfer-progress test > /tmp/agentflow-maven.log 2>&1
+          result=$?
+          set -e
+          python3 - <<'PY'
+          from pathlib import Path
+          lines = Path('/tmp/agentflow-maven.log').read_text(errors='replace').splitlines()
+          print('=== Full-suite test summaries ===')
+          for line in lines:
+              if 'Tests run:' in line or 'BUILD SUCCESS' in line or 'BUILD FAILURE' in line:
+                  print(line)
+          print('=== Failure diagnostics (first five occurrences) ===')
+          diagnostics = [line for line in lines if 'SUPERSESSION_DIAGNOSTIC' in line]
+          for line in diagnostics[:5]:
+              print(line)
+          print('=== Maven final output ===')
+          print('\n'.join(lines[-65:]))
+          PY
+          exit "$result"
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
