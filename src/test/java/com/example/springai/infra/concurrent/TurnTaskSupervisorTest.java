@@ -5,6 +5,7 @@ import com.example.springai.core.event.AgentEventSink;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import java.util.Arrays;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -43,18 +44,41 @@ class TurnTaskSupervisorTest {
     void supersedingTurnInterruptsOldWorkerAndDoesNotRemoveReplacement() throws Exception {
         ExecutorService workers=Executors.newFixedThreadPool(2);
         CountDownLatch started=new CountDownLatch(1),interrupted=new CountDownLatch(1),holdNew=new CountDownLatch(1);
-        CountDownLatch newStarted=new CountDownLatch(1);
+        CountDownLatch newStarted=new CountDownLatch(1),oldExited=new CountDownLatch(1);
         AtomicBoolean newInterrupted=new AtomicBoolean();
+        AtomicReference<Thread> oldWorker=new AtomicReference<>();
+        AtomicReference<Throwable> oldFailure=new AtomicReference<>();
+        long began=System.nanoTime();
         try(var supervisor=new TurnTaskSupervisor(workers)) {
             var first=context(5000,new AtomicInteger());
-            supervisor.submit(first,() -> { started.countDown(); try{Thread.sleep(5000);}catch(InterruptedException ex){interrupted.countDown();} });
+            supervisor.submit(first,() -> {
+                oldWorker.set(Thread.currentThread());
+                started.countDown();
+                try { Thread.sleep(5000); }
+                catch(InterruptedException ex) { interrupted.countDown(); }
+                catch(Throwable ex) { oldFailure.set(ex); throw ex; }
+                finally { oldExited.countDown(); }
+            });
             assertTrue(started.await(1,TimeUnit.SECONDS));
+            int before=supervisor.activeCount();
             var second=context(5000,new AtomicInteger());
             supervisor.submit(second,() -> {
                 newStarted.countDown();
                 try{holdNew.await();}catch(InterruptedException ex){newInterrupted.set(true);}
             });
-            assertTrue(interrupted.await(1,TimeUnit.SECONDS), "Old worker must actually be interrupted");
+            boolean gotInterrupt=interrupted.await(1,TimeUnit.SECONDS);
+            if(!gotInterrupt) {
+                Thread thread=oldWorker.get();
+                System.out.println("SUPERSESSION_DIAGNOSTIC elapsedMs="+TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-began)
+                        +", activeBefore="+before+", activeAfter="+supervisor.activeCount()
+                        +", oldCancelled="+first.isCancelled()+", newCancelled="+second.isCancelled()
+                        +", oldExited="+(oldExited.getCount()==0)+", newStarted="+(newStarted.getCount()==0)
+                        +", timeouts="+supervisor.timeoutCount()+", cancels="+supervisor.cancelledCount()
+                        +", oldFailure="+oldFailure.get()+", oldThread="+thread
+                        +", oldState="+(thread==null?null:thread.getState())
+                        +", oldStack="+(thread==null?null:Arrays.toString(thread.getStackTrace())));
+            }
+            assertTrue(gotInterrupt, "Old worker must actually be interrupted");
             assertTrue(newStarted.await(1,TimeUnit.SECONDS), "Replacement must actually start");
             assertTrue(first.isCancelled());
             assertFalse(second.isCancelled());
