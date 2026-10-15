@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CapabilityToolsTest {
-
     private final LogQueryTool logTool = new LogQueryTool(new MockLogAdapter());
     private final DatabaseDiagnoseTool dbTool = new DatabaseDiagnoseTool(new MockDbAdapter());
     private final OpsActionTool opsTool = new OpsActionTool(new MockOpsActionAdapter());
@@ -25,18 +24,22 @@ class CapabilityToolsTest {
         assertTrue(logReport.contains("order-service"));
         assertTrue(logReport.contains("HikariPool"));
         assertTrue(logReport.contains("142"));
-        System.out.println("【单测验证】LogQueryTool 日志分析报告:\n" + logReport);
     }
 
     @Test
-    @DisplayName("测试 DatabaseDiagnoseTool 原子工具数据库性能诊断功能")
+    @DisplayName("数据库报告必须包含服务、实际水位、目标会话与模拟来源，而非固定产品名")
     void testDiagnoseDatabase() {
         String dbReport = dbTool.diagnoseDatabase("order-service", 1000L);
         assertNotNull(dbReport);
-        assertTrue(dbReport.contains("order-service"));
-        assertTrue(dbReport.contains("trx_10423"));
-        assertTrue(dbReport.contains("HikariCP"));
-        System.out.println("【单测验证】DatabaseDiagnoseTool 数据库诊断报告:\n" + dbReport);
+        assertAll(
+                () -> assertTrue(dbReport.contains("order-service")),
+                () -> assertTrue(dbReport.contains("trx_10423")),
+                () -> assertTrue(dbReport.contains("活跃 50 / 最大 50")),
+                () -> assertTrue(dbReport.contains("等待线程数: 28")),
+                () -> assertTrue(dbReport.contains("45200ms")),
+                () -> assertTrue(dbReport.contains("演示")),
+                () -> assertTrue(dbReport.contains("实际操作前必须重新核验"))
+        );
     }
 
     @Test
@@ -47,6 +50,5 @@ class CapabilityToolsTest {
         assertTrue(actionReport.contains("OPS-"));
         assertTrue(actionReport.contains("order-service"));
         assertTrue(actionReport.contains("trx_10423"));
-        System.out.println("【单测验证】OpsActionTool 应急处置结果:\n" + actionReport);
     }
 }

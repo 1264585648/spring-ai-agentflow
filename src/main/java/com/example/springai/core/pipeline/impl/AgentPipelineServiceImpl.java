@@ -27,7 +27,6 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.concurrent.Executor;
-import java.util.concurrent.RejectedExecutionException;
 
 /** 串行步骤流水线。现有接入依赖仍待后续 SPI 抽离；不宣称是完整 DAG/runtime。 */
 @Service
@@ -67,6 +66,9 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
     public long getTimeoutTurnCount() { return supervisor.timeoutCount(); }
     public long getCancelledTurnCount() { return supervisor.cancelledCount(); }
     @Override public boolean cancelActiveTurn(String sessionId) { return sessionId!=null && supervisor.cancel(sessionId); }
+    @Override public boolean cancelActiveTurn(String sessionId,String turnId) {
+        return sessionId!=null && supervisor.cancel(sessionId,turnId);
+    }
     @EventListener public void onDisconnected(SessionDisconnectedEvent event) { cancelActiveTurn(event.getSessionId()); }
     @PreDestroy @Override public void close() { supervisor.close(); }
     @Override public void process(ChatRequest request) {
@@ -79,8 +81,8 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
                 .effectiveQuery(request.getQuery()).deadlineMillis(System.currentTimeMillis()+turnTimeoutMillis).build();
         var rawSink=new SseAgentEventSink(context.getSessionId(),turnId,publisher,cards,memory,request.getQuery());
         context.setSink(new CancellableAgentEventSink(context,rawSink));
-        try { supervisor.submit(context,() -> run(context)); }
-        catch(RejectedExecutionException ex) { rawSink.error("QUEUE_SATURATED: 系统繁忙，请稍后重试"); throw ex; }
+        // Rejection is returned to HTTP without stealing the previous turn's SSE binding.
+        supervisor.submit(context,() -> run(context),rawSink::activate,rawSink::release);
     }
     private void run(AgentContext context) {
         try {
@@ -118,7 +120,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
         } catch(Exception ex) {
             log.warn("[Pipeline] 回合执行失败 turnId={}",context.getTurnId(),ex);
             context.getSink().error(context.isCancelled()?"TURN_CANCELLED: 本回合已停止":"PIPELINE_FAILED: 处理失败，请检查服务状态");
-        } finally { publisher.unbindTurn(context.getSessionId(),context.getTurnId()); }
+        }
     }
     private void executeRoute(AgentContext context,Resolution.Route route) {
         if(route.planType()==PlanType.FALLBACK) {

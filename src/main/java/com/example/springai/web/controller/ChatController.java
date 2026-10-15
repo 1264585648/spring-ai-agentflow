@@ -34,8 +34,13 @@ public class ChatController {
         return ResponseEntity.ok(Map.of("code",200,"message","请求已提交处理","sessionId",request.getSessionId(),"turnId",request.getTurnId()));
     }
     @PostMapping("/cancel")
-    public ResponseEntity<Map<String,Object>> cancel(@RequestParam("sessionId") String sessionId) {
-        return ResponseEntity.ok(Map.of("code",200,"cancelled",pipelineService.cancelActiveTurn(sessionId)));
+    public ResponseEntity<Map<String,Object>> cancel(@RequestParam("sessionId") String sessionId,
+            @RequestParam("turnId") String turnId) {
+        if(blank(sessionId) || blank(turnId) || sessionId.length()>128 || turnId.length()>128) {
+            return failure(400,"sessionId 和 turnId 必须为 1~128 字符的非空标识");
+        }
+        return ResponseEntity.ok(Map.of("code",200,"turnId",turnId,
+                "cancelled",pipelineService.cancelActiveTurn(sessionId,turnId)));
     }
     @GetMapping(value="/stream-ask",produces=MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamAsk(@RequestParam("sessionId") String sessionId,@RequestParam("query") String query,
