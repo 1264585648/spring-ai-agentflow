@@ -26,10 +26,13 @@ class TurnAdmissionRegressionTest {
     private final SseEventPublisher publisher = new SseEventPublisher(transport);
 
     private Fixture fixture(String session, String turn, long timeoutMs) {
-        when(transport.send(anyString(), any())).thenAnswer(call -> {
-            packets.add(call.getArgument(1));
+        // doAnswer avoids invoking an already-stubbed method while preparing another turn.
+        // when(transport.send(anyString(), any())) would record the matcher's null argument.
+        doAnswer(call -> {
+            SsePacket<?> packet = call.getArgument(1);
+            packets.add(packet);
             return true;
-        });
+        }).when(transport).send(anyString(), any());
         var context = AgentContext.builder().sessionId(session).turnId(turn)
                 .deadlineMillis(System.currentTimeMillis() + timeoutMs).build();
         var sink = new SseAgentEventSink(session, turn, publisher, null, null, null);
@@ -119,7 +122,6 @@ class TurnAdmissionRegressionTest {
             assertFalse(firstConstructed.context.isCancelled());
             assertFalse(publisher.isStaleTurn("s", "A"));
             assertFalse(supervisor.cancel("s", "B"));
-            // Force the cancelled dispatch to arrive after A's registration.
             queue.get(0).run();
             assertFalse(publisher.isStaleTurn("s", "A"));
             queue.get(1).run();
