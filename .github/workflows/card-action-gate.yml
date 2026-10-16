@@ -20,7 +20,39 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Compile and run all tests (no skip or curated exclusion)
-        run: mvn -B --no-transfer-progress test
+        shell: bash
+        run: |
+          set +e
+          mvn -B --no-transfer-progress test > /tmp/agentflow-maven.log 2>&1
+          result=$?
+          set -e
+          mkdir -p target/ci-logs
+          cp /tmp/agentflow-maven.log target/ci-logs/maven.log
+          python3 - <<'PY'
+          from pathlib import Path
+          lines = Path('/tmp/agentflow-maven.log').read_text(errors='replace').splitlines()
+          print('=== Full-suite test summaries ===')
+          for line in lines:
+              if 'Tests run:' in line or 'BUILD SUCCESS' in line or 'BUILD FAILURE' in line:
+                  print(line)
+          print('=== Failure diagnostics (first five occurrences) ===')
+          diagnostics = [line for line in lines if 'SUPERSESSION_DIAGNOSTIC' in line]
+          for line in diagnostics[:5]:
+              print(line)
+          print('=== Maven final output ===')
+          print('\n'.join(lines[-65:]))
+          PY
+          exit "$result"
+      - name: Preserve full Maven output and test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-test-evidence
+          path: |
+            target/ci-logs/
+            target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 7
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -35,6 +67,12 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      - run: npx tsc --strict --target ES2022 --module commonjs --lib ES2022,DOM --outDir /tmp/agentflow-client-tests src/api/sseClient.ts
-      - run: CARD_CLIENT_JS=/tmp/agentflow-client-tests/api/sseClient.js node --test tests/client-regression.test.cjs
+      - run: npx tsc --strict --target ES2022 --module commonjs --lib ES2022,DOM --outDir /tmp/agentflow-client-tests src/api/sseClient.ts src/api/turnCancellation.ts
+      - run: CARD_CLIENT_JS=/tmp/agentflow-client-tests/api/sseClient.js node --test tests/client-regression.test.cjs tests/turn-client-regression.test.cjs
       - run: npm run build
+      - name: Type-check browser test entry
+        run: npx tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --jsx react-jsx --lib ES2022,DOM --esModuleInterop --skipLibCheck tests/chat-drawer-regression.tsx
+      - name: Build isolated mounted-component regression page
+        run: npx vite build --config vite.regression.config.ts
+      - name: Real Chrome lifecycle regressions (no mock React and no skip)
+        run: python3 tests/run-browser-regression.py

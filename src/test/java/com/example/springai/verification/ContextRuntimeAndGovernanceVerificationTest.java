@@ -200,6 +200,7 @@ class ContextRuntimeAndGovernanceVerificationTest {
 
         SseAgentEventSink sinkTurn1 = new SseAgentEventSink(
                 "sess-sse-01", "turn-1", publisher, null, null, "问题1");
+        sinkTurn1.activate(); // 模拟任务已被接收后的显式激活，不再依赖构造副作用。
 
         // Turn 1 正常推送事件
         assertTrue(sinkTurn1.thinking("正在分析问题1..."));
@@ -219,6 +220,7 @@ class ContextRuntimeAndGovernanceVerificationTest {
         // Turn 2 正常推送
         SseAgentEventSink sinkTurn2 = new SseAgentEventSink(
                 "sess-sse-01", "turn-2", publisher, null, null, "问题2");
+        sinkTurn2.activate();
         assertTrue(sinkTurn2.thinking("开始分析问题2..."));
         assertTrue(sinkTurn2.message("回答片段2"));
     }
