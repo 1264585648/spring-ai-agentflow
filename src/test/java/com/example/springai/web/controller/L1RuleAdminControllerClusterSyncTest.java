@@ -85,6 +85,32 @@ class L1RuleAdminControllerClusterSyncTest {
         verify(repository, never()).save(any());
     }
 
+    @Test
+    void unimplementedTargetTypeIsRejectedBeforeSave() {
+        RuleDefinitionRepository repository = mock(RuleDefinitionRepository.class);
+        when(repository.findByRuleCode("CMD_WF")).thenReturn(Optional.empty());
+        L1RuleAdminController controller = new L1RuleAdminController(
+                repository,
+                event -> {
+                },
+                new L1RuleRegistry(repository, Runnable::run),
+                mock(L1ToolCatalog.class),
+                reason -> ClusterSyncResult.ok());
+
+        RuleCreateRequest request = validRequest();
+        request.setRuleCode("CMD_WF");
+        request.setTargetType("WORKFLOW");
+        request.setTargetRef("SOME_WORKFLOW");
+
+        ResponseEntity<?> response = controller.createRule(request);
+
+        assertEquals(400, response.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) response.getBody();
+        assertTrue(body.get("error").contains("尚无执行器"));
+        verify(repository, never()).save(any());
+    }
+
     private RuleCreateRequest validRequest() {
         RuleCreateRequest request = new RuleCreateRequest();
         request.setRuleCode("CMD_OK");

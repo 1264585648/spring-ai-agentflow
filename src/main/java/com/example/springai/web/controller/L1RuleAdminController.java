@@ -37,7 +37,7 @@ import java.util.regex.PatternSyntaxException;
 public class L1RuleAdminController {
 
     private static final Set<String> MATCH_TYPES = Set.of("EXACT", "PREFIX", "REGEX");
-    private static final Set<String> TARGET_TYPES = Set.of("TOOL", "STATIC_TEXT", "INTERACTIVE_CARD", "WORKFLOW");
+    private static final Set<String> TARGET_TYPES = Set.of("TOOL", "STATIC_TEXT");
 
     private final RuleDefinitionRepository ruleRepository;
     private final ApplicationEventPublisher eventPublisher;
@@ -233,7 +233,7 @@ public class L1RuleAdminController {
             return "matchType 不合法，允许 EXACT、PREFIX、REGEX";
         }
         if (targetType == null || !TARGET_TYPES.contains(targetType)) {
-            return "targetType 不合法，允许 TOOL、STATIC_TEXT、INTERACTIVE_CARD、WORKFLOW";
+            return "targetType 不合法，当前仅支持 TOOL、STATIC_TEXT（WORKFLOW / INTERACTIVE_CARD 尚无执行器，配置后会被静默放行）";
         }
         if ("REGEX".equals(matchType)) {
             if (patternExpr == null || patternExpr.isBlank()) {

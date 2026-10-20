@@ -29,6 +29,7 @@ public class CardInteractionController {
         catch (CardStateConflictException ex) { return failure(409, ex.getMessage(), "CARD_STATE_CONFLICT", false); }
         catch (IllegalArgumentException ex) { return failure(400, ex.getMessage(), "INVALID_SUBMISSION", true); }
         catch (CardExecutionUnknownException ex) { return failure(500, ex.getMessage(), "EXECUTION_UNKNOWN", false); }
+        catch (CardNotExecutedException ex) { return failure(500, ex.getMessage(), "EXECUTION_REJECTED", true); }
         catch (RuntimeException ex) {
             log.error("[CardController] 提交处理异常", ex);
             return failure(500, "提交未完成，请核查动作状态", "SUBMISSION_ERROR", false);
