@@ -27,6 +27,9 @@
 * 🧭 **[07-内核架构设计与演进路线.md](./07-内核架构设计与演进路线.md)**  
   *框架内核蓝图*：当前实现矩阵、架构差距判断、5 层顶级包结构标准、`IntentResolver` / `SubAgent` / `AgentHook` 等扩展点接口草案、短路 vs 路由语义、卡片状态机、SSE 生命周期、多节点方案、模块拆分与 M0~M5 里程碑。
 
+* 🏗️ **[12-AgentFlow分层架构设计与落地状态.md](./12-AgentFlow分层架构设计与落地状态.md)**  
+  *目标分层架构*：分层调用关系图与编译依赖图、信任边界与统一调用入口、ActionGate 与动作一致性、父子执行契约、Workflow 执行器、运行时内核与 SPI（借鉴 Cordis）、线程模型、原型验收场景，以及对照当前代码的落地状态表。
+
 * 🔌 **[03-前后端接口与SSE协议契约.md](./03-前后端接口与SSE协议契约.md)**  
   *前后端联调基石*：HTTP REST 接口、8 类 SSE 下行事件（`thinking`, `progress`, `message`, `interactive_card`, `recommend_questions`, `conversation_title`, `done`, `error`）数据载荷、连接生命周期与 EventSource 集成。
 
