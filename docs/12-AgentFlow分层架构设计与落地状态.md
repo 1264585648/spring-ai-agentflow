@@ -14,7 +14,7 @@ AgentFlow 的定位是通用的企业级 Multi-Agent 流式微内核：内核只
 
 ## 分层架构总览
 
-![分层架构 · 调用关系图](AgentFlow分层架构设计-images/01-layered-architecture.png)
+![分层架构 · 调用关系图](./assets/12-layered-architecture/01-layered-architecture.png)
 
 业务场景有两条下行路径：
 
@@ -45,7 +45,7 @@ agent 节点经 agent loop，tool / human 节点直连 runtime。两条路径在
 6. **依赖必须声明。** 组件在 `inject` 中声明要用的服务和工具，没声明的在运行时拒绝访问。智能体的工具白名单就是它的依赖声明。这一约束只覆盖经 runtime 获取的服务；插件自持的客户端由信任边界约束。
 7. **内核纯净由 CI 守护。** 用 ArchUnit 检查：api 与内核不引用插件、适配器和厂商 SDK；除启动模块外，任何模块不得依赖内核实现；场景包不得引用数据库、HTTP、运维 SDK 客户端。违反即构建失败。
 
-![编译依赖图](AgentFlow分层架构设计-images/02-compile-dependencies.png)
+![编译依赖图](./assets/12-layered-architecture/02-compile-dependencies.png)
 
 编译依赖都指向 api 模块，调用关系则自上而下（见总览图）；两张图各自无环。
 
@@ -68,7 +68,7 @@ runtime 的安全保证只在明确的信任边界内成立：插件代码受信
 
 ActionGate 是 runtime 内的写操作审批关口。凡是会改变外部系统状态的操作，都必须先生成提案，经人工确认，再由 ActionGate 校验通过后才会执行。它只管审批；用户与资源授权由统一调用入口负责，执行状态与一致性见“回合挂起、恢复与动作一致性”。
 
-![ActionGate 审批流程](AgentFlow分层架构设计-images/03-actiongate-flow.png)
+![ActionGate 审批流程](./assets/12-layered-architecture/03-actiongate-flow.png)
 
 校验不通过时，用户修改后可以重新提交；只有校验通过的动作才会到达执行器。
 
@@ -88,7 +88,7 @@ ActionGate 是 runtime 内的写操作审批关口。凡是会改变外部系统
 
 等待审批时，回合挂起而不是阻塞；审批状态与执行状态分开管理；执行结果不明时走对账，不盲目重试。
 
-![回合与动作状态机](AgentFlow分层架构设计-images/04-state-machines.png)
+![回合与动作状态机](./assets/12-layered-architecture/04-state-machines.png)
 
 | 结论 | 依据 |
 | --- | --- |
