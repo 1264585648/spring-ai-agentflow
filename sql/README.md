@@ -8,7 +8,10 @@
 
 | 文件名 | 用途说明 | 适用版本 |
 | :--- | :--- | :--- |
-| [init_schema.sql](./init_schema.sql) | L1 规则引擎与工作流核心表结构定义及演示种子数据 | MySQL 8.0+ |
+| [init_schema.sql](./init_schema.sql) | 规则引擎、智能体注册中心与 L2 FAQ 表结构定义及演示种子数据；**不执行 DROP**，可重复执行 | MySQL 8.0+ |
+| [reset_demo_schema.sql](./reset_demo_schema.sql) | ⚠️ **破坏性重置**：删除全部演示表。仅限可丢弃的演示库，禁止用于已有业务数据 | MySQL 8.0+ |
+
+> 应用默认库名是 `enterprise_agent_db`（见 `src/main/resources/application.yml` 的 `MYSQL_DB` 默认值），可用环境变量覆盖。本目录不提供增量迁移脚本；生产升级必须另行管理版本化迁移。
 
 ---
 
@@ -69,16 +72,18 @@ erDiagram
 推荐使用 UTF-8 超集编码（`utf8mb4`）以及现代排序规则（`utf8mb4_unicode_ci`）：
 
 ```sql
-CREATE DATABASE IF NOT EXISTS `ai_agent_db` 
+CREATE DATABASE IF NOT EXISTS `enterprise_agent_db` 
   DEFAULT CHARACTER SET utf8mb4 
   DEFAULT COLLATE utf8mb4_unicode_ci;
 
-USE `ai_agent_db`;
+USE `enterprise_agent_db`;
 ```
 
 ### 2. 执行初始化脚本
 通过命令行导入：
 ```bash
-mysql -u root -p ai_agent_db < sql/init_schema.sql
+mysql -u root -p enterprise_agent_db < sql/init_schema.sql
 ```
-或者在 Navicat / DataGrip / DBeaver 等可视化客户端中打开 `sql/init_schema.sql` 并在 `ai_agent_db` 下运行全部语句。
+或者在 Navicat / DataGrip / DBeaver 等可视化客户端中打开 `sql/init_schema.sql` 并在 `enterprise_agent_db` 下运行全部语句。
+
+> `target_type` 中的 `WORKFLOW` 与 `INTERACTIVE_CARD` 目前**没有执行器**，运行时会被静默放行到 L2/L3；只有 `STATIC_TEXT` 与 `TOOL` 可用。见 [13](../docs/13-实现状态矩阵与文实一致性登记.md)。
