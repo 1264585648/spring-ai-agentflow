@@ -4,6 +4,7 @@ import com.example.springai.core.card.CardSubmitHandler;
 import com.example.springai.core.card.dto.CardSubmitRequest;
 import com.example.springai.core.card.dto.CardSubmitResult;
 import com.example.springai.core.card.exception.CardExecutionUnknownException;
+import com.example.springai.core.card.exception.CardNotExecutedException;
 import com.example.springai.core.card.exception.CardSecurityException;
 import com.example.springai.core.card.exception.CardStateConflictException;
 import com.example.springai.core.card.impl.InMemoryCardRegistry;
@@ -201,6 +202,31 @@ class ActionGateTest {
         ActionGate gate = new ActionGate(registry, List.of(failed), ActionAuthorizer.DENY_ALL, true, false);
         assertThrows(CardExecutionUnknownException.class, () -> gate.submit(request, null));
         assertEquals(CardState.EXECUTION_UNKNOWN, registry.getRecord("act-1").orElseThrow().getState());
+    }
+
+    @Test
+    void provenNonExecutionReleasesProposalForRetry() {
+        CardSubmitRequest request = issue();
+        AtomicInteger calls = new AtomicInteger();
+        CardSubmitHandler flaky = new CardSubmitHandler() {
+            public boolean supports(String type) { return true; }
+            public boolean isSimulation() { return true; }
+            public CardSubmitResult handleSubmit(ApprovedCardSubmission submission) {
+                if (calls.incrementAndGet() == 1) {
+                    throw new CardNotExecutedException("连接未建立，请求未发出");
+                }
+                return CardSubmitResult.ok("T-2", "ok");
+            }
+        };
+        ActionGate gate = new ActionGate(registry, List.of(flaky), ActionAuthorizer.DENY_ALL, true, false);
+
+        assertThrows(CardNotExecutedException.class, () -> gate.submit(request, null));
+        assertEquals(CardState.ISSUED, registry.getRecord("act-1").orElseThrow().getState(),
+                "能证明未执行时必须释放回 ISSUED");
+
+        var retried = gate.submit(request, null);
+        assertEquals("T-2", retried.getResult().getTicketId());
+        assertEquals(2, calls.get());
     }
 
     @Test

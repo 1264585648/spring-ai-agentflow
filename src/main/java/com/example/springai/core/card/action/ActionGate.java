@@ -59,19 +59,35 @@ public final class ActionGate {
         ApprovedCardSubmission approved = new ApprovedCardSubmission(actionId, sessionId, cardType, actorId, values);
         handler.validate(approved);
         CardRecord claimed = registry.claim(proposal);
+        CardSubmitResult result;
         try {
-            CardSubmitResult result = handler.handleSubmit(approved);
+            result = handler.handleSubmit(approved);
+        } catch (CardNotExecutedException ex) {
+            // 处理器能证明外部副作用尚未发生：释放提案，允许修正后重试。
+            try { registry.fail(actionId, ex.getMessage(), true); }
+            catch (RuntimeException storageError) { ex.addSuppressed(storageError); }
+            log.warn("[ActionGate] 处理器声明未执行，提案已释放 actionId={}: {}", actionId, ex.getMessage());
+            throw ex;
+        } catch (RuntimeException ex) {
+            markExecutionUnknown(actionId, ex);
+            throw new CardExecutionUnknownException(ex);
+        }
+        try {
             if (result == null || !result.isSuccess() || result.getTicketId() == null || result.getTicketId().isBlank()) {
                 throw new IllegalStateException("执行器未返回完整的确定成功回执");
             }
             registry.complete(actionId, result);
-            return new SubmissionResult(actionId, sessionId, claimed.getTurnId(), cardType, result);
         } catch (RuntimeException ex) {
-            try { registry.markExecutionUnknown(actionId, "执行开始后未确认成功，需核查外部系统"); }
-            catch (RuntimeException storageError) { ex.addSuppressed(storageError); }
-            log.error("[ActionGate] 执行结果未知 actionId={}", actionId, ex);
+            markExecutionUnknown(actionId, ex);
             throw new CardExecutionUnknownException(ex);
         }
+        return new SubmissionResult(actionId, sessionId, claimed.getTurnId(), cardType, result);
+    }
+    /** 执行开始后的任何异常都按「结果未知」处理，绝不自动恢复为可重试。 */
+    private void markExecutionUnknown(String actionId, RuntimeException ex) {
+        try { registry.markExecutionUnknown(actionId, "执行开始后未确认成功，需核查外部系统"); }
+        catch (RuntimeException storageError) { ex.addSuppressed(storageError); }
+        log.error("[ActionGate] 执行结果未知 actionId={}", actionId, ex);
     }
     @Data
     public static final class SubmissionResult {

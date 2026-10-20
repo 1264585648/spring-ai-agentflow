@@ -206,7 +206,21 @@ public class AgentAdminController {
             }
         }
 
-        // 2. 下线/停用前置依赖审计防线 (当转为 DEPRECATED 或 OFFLINE 时)
+        // 2. 状态迁移矩阵校验 (RULE-06)：只允许显式迁移，禁止原地跳变
+        AgentStatus current;
+        try {
+            current = entity.getStatus() == null ? null
+                    : AgentStatus.valueOf(entity.getStatus().trim().toUpperCase(Locale.ROOT));
+        } catch (RuntimeException ex) {
+            return badRequest("当前状态不合法，无法迁移: " + entity.getStatus());
+        }
+        AgentStatus target = AgentStatus.valueOf(cleanStatus);
+        if (!AgentStatus.canTransition(current, target)) {
+            return badRequest("违反 RULE-06 规范：不允许从 " + current.name() + " 迁移到 " + target.name()
+                    + "，允许的迁移为 DRAFT→ONLINE/OFFLINE、ONLINE→DEPRECATED、DEPRECATED→ONLINE/OFFLINE、OFFLINE→ONLINE");
+        }
+
+        // 3. 下线/停用前置依赖审计防线 (当转为 DEPRECATED 或 OFFLINE 时)
         if (AgentStatus.DEPRECATED.name().equalsIgnoreCase(cleanStatus) || AgentStatus.OFFLINE.name().equalsIgnoreCase(cleanStatus)) {
             List<RuleDefinitionEntity> dependentRules = checkRuleDependencies(entity.getAgentCode());
             if (!dependentRules.isEmpty()) {

@@ -18,6 +18,8 @@ public interface CardSubmitHandler {
     /**
      * 执行一次经批准的提交。actionId 可作为下游业务幂等键。
      * 异常或失败响应不保证外部未执行，ActionGate 将保守地禁止再次提交。
+     * 只有能证明外部副作用尚未发生时，才可抛出 {@link com.example.springai.core.card.exception.CardNotExecutedException}，
+     * 此时提案会被释放回 ISSUED 允许修正后重试。
      */
     CardSubmitResult handleSubmit(ApprovedCardSubmission submission);
 }

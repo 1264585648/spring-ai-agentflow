@@ -1,5 +1,7 @@
 # 通用 Agent 骨架边界与核心设计哲学
 
+> ⚠️ **状态提示（2026-10-20）**：本文定义框架边界与红线，属于长期约束。第 4 节的扩展点状态表已过期，实现状态以 [13](./13-实现状态矩阵与文实一致性登记.md) 为准。
+
 > **文档定位**：本项目唯一核心设计准则。后续所有的代码重构与扩展开发，必须严格遵循本文档划定的边界。
 
 ---
@@ -76,11 +78,11 @@ flowchart LR
 | :--- | :--- | :--- | :---: |
 | `CardSubmitHandler`（卡片插槽） | 业务方 | `DefaultMockCardSubmitHandler` | ✅ 已实现 |
 | 智能体元数据注册中心（Agent Hub） | 管理员配置 | `AgentPromptRegistry` + `AgentChatClientFactory` | ✅ 已实现 |
-| `SubAgent`（智能体行为插槽） | 业务方 | `GeneralChatAgent`（通用对话 + `@Tool`） | 📐 设计中 |
+| `SubAgent`（智能体行为插槽） | 业务方 | `GeneralChatAgent` + `TroubleshootSubAgent` | ✅ 已实现 |
 | `AgentHook`（拦截插槽） | 业务方 | 空链 | 📐 设计中 |
-| `IntentResolver`（意图解析链 L1/L2/L3） | 框架为主，业务可扩展 | L1 规则解析器（已有规则引擎） | 🚧 L1 已有，待抽象 |
+| `IntentResolver`（意图解析链 L1/L2/L3） | 框架为主，业务可扩展 | `L1RuleResolver` / `L2VectorResolver` / `L3MasterAgentResolver` | ✅ 已实现 |
 | `L1ClusterSync`（集群同步） | 框架 | 空实现；可选 Apollo OpenAPI | ✅ 已实现 |
-| `ConversationMemory` / `CardRegistry` / `SessionEventBus` | 框架 | 内存实现，可选 Redis | 📐 设计中 |
+| `ConversationMemory` / `CardRegistry` / `SessionEventBus` | 框架 | 内存实现，可选 Redis | ConversationMemory ✅、CardRegistry ✅、SessionEventBus 📐 |
 
 **元数据 ≠ 行为**：注册中心让智能体的人设、模型、工具可以在后台动态调整，但智能体“做什么”（调用哪些工具、是否下发卡片）仍需要 `SubAgent` 插槽承载。两者都具备，新增业务智能体才能做到不改框架代码。
 
@@ -104,7 +106,7 @@ flowchart TD
 
 1. **第一阶段（当前在 GitHub 上）**：
    - 框架代码 100% 通用。
-   - 自带一个“Demo 演示场景”（GitHub 研发协同助手，见 [01](./01-系统架构全景与实施规划.md)），开箱即用。
+   - 自带一个“Demo 演示场景”（智能运维排障，见 [08](./08-智能运维排障架构与详细设计说明书.md)），开箱即用。GitHub 研发协同蓝图（[01](./01-系统架构全景与实施规划.md)）已归档，仅作历史参考。
 2. **第二阶段（拉到公司内部时）**：
    - 框架作为一个干净的底座引入。
    - 在具体的业务包里，编写特定业务 SubAgent、注入公司 BPM 客户端、加载业务知识库。
@@ -115,9 +117,9 @@ flowchart TD
 - **`agentflow-core`**：只含接口与流水线内核，不依赖任何具体存储或配置中心；
 - **`agentflow-spring-boot-starter`**：自动装配与默认内存实现；
 - **可选模块**：L1 规则 JDBC 存储、Apollo 集群同步、Redis 状态存储等，按需引入；
-- **`agentflow-sample-github`**：GitHub 研发协同 Demo 与前端，使用内嵌数据库，Clone 即可运行。
+- **`agentflow-sample-troubleshoot`**：智能运维排障 Demo 与前端，使用内嵌数据库，Clone 即可运行。
 
-当前代码仍是单一 Spring Boot 工程：MySQL 为硬依赖，GitHub Demo 的工具、卡片和业务智能体编码也还写在内核代码里。拆分计划见 [07 第 6 节](./07-内核架构设计与演进路线.md#6-交付形态模块拆分)。
+当前代码仍是单一 Spring Boot 工程：MySQL 为硬依赖；内核中已无 GitHub 业务类，但仍存在业务编码与关键词路由（`AgentType`、`MasterAgentRouter`），且 `core` 依赖 `web`/`infra`。拆分计划见 [07 第 6 节](./07-内核架构设计与演进路线.md#6-交付形态模块拆分)，逐项现状见 [13](./13-实现状态矩阵与文实一致性登记.md)。
 
 ---
 

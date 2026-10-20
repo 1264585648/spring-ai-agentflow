@@ -174,7 +174,7 @@ class AgentAdminControllerTest {
     }
 
     @Test
-    @DisplayName("测试无依赖的业务智能体顺利流转至 DEPRECATED / OFFLINE 状态")
+    @DisplayName("测试无依赖的业务智能体按 RULE-06 迁移矩阵从 ONLINE 经 DEPRECATED 流转至 OFFLINE")
     void testOfflineSuccessWithoutDependency() {
         AgentDefinitionEntity subAgent = AgentDefinitionEntity.builder()
                 .agentCode("SRE_COPILOT_AGENT")
@@ -188,13 +188,34 @@ class AgentAdminControllerTest {
         when(ruleRepository.findAll()).thenReturn(Collections.emptyList());
         when(agentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        Map<String, String> body = Map.of("status", "OFFLINE");
-        ResponseEntity<?> response = controller.updateStatus("SRE_COPILOT_AGENT", body);
+        ResponseEntity<?> deprecated = controller.updateStatus("SRE_COPILOT_AGENT", Map.of("status", "DEPRECATED"));
+        assertEquals(200, deprecated.getStatusCode().value());
 
-        assertEquals(200, response.getStatusCode().value());
-        AgentResponse resp = (AgentResponse) response.getBody();
+        ResponseEntity<?> offline = controller.updateStatus("SRE_COPILOT_AGENT", Map.of("status", "OFFLINE"));
+        assertEquals(200, offline.getStatusCode().value());
+        AgentResponse resp = (AgentResponse) offline.getBody();
         assertNotNull(resp);
         assertEquals("OFFLINE", resp.getStatus());
         assertEquals(0, resp.getIsEnabled(), "下线后 isEnabled 应同步变为 0");
+    }
+
+    @Test
+    @DisplayName("违反 RULE-06 迁移矩阵的跳变被拒绝，且不落库")
+    void testIllegalTransitionRejected() {
+        AgentDefinitionEntity subAgent = AgentDefinitionEntity.builder()
+                .agentCode("LOG_DIAGNOSE_AGENT")
+                .isSystemCore(0)
+                .status("ONLINE")
+                .isEnabled(1)
+                .version(1)
+                .build();
+
+        when(agentRepository.findByAgentCode("LOG_DIAGNOSE_AGENT")).thenReturn(Optional.of(subAgent));
+
+        ResponseEntity<?> response = controller.updateStatus("LOG_DIAGNOSE_AGENT", Map.of("status", "DRAFT"));
+
+        assertEquals(400, response.getStatusCode().value());
+        assertTrue(response.getBody().toString().contains("不允许从 ONLINE 迁移到 DRAFT"));
+        verify(agentRepository, never()).save(any());
     }
 }
