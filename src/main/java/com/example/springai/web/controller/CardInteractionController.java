@@ -21,6 +21,7 @@ import java.util.Map;
 public class CardInteractionController {
     private final ActionGate actionGate;
     private final SseEventPublisher ssePublisher;
+
     @PostMapping(value = "/submit", consumes = "application/json")
     public ResponseEntity<Map<String, Object>> submitCard(@RequestBody CardSubmitRequest request, Principal principal) {
         ActionGate.SubmissionResult completed;
@@ -34,20 +35,67 @@ public class CardInteractionController {
             log.error("[CardController] 提交处理异常", ex);
             return failure(500, "提交未完成，请核查动作状态", "SUBMISSION_ERROR", false);
         }
-        // 确定成功已归档，尽力通知失败不能改变 HTTP 成功结果；回执仍归属于原卡片/回合。
+        notifyReceiptBestEffort(completed);
+        return buildSuccessResponse(completed);
+    }
+
+    /**
+     * 分步模式第一步：仅审批通过提案（置为 APPROVED + NOT_STARTED），暂不触发外部写执行。
+     */
+    @PostMapping(value = "/approve", consumes = "application/json")
+    public ResponseEntity<Map<String, Object>> approveCard(@RequestBody CardSubmitRequest request, Principal principal) {
+        ActionGate.ApprovalResult approved;
         try {
-            if (ssePublisher != null) ssePublisher.sendCardReceipt(completed.getSessionId(), completed.getTurnId(),
-                    completed.getActionId(), completed.getResult().getTicketId(),
-                    "\n\n> 表单已确认提交，关联单号：`" + completed.getResult().getTicketId() + "`\n");
-        } catch (RuntimeException ex) { log.warn("[CardController] 已归档，但回执通知未送达 actionId={}", completed.getActionId(), ex); }
+            approved = actionGate.approve(request, principal);
+        } catch (CardNotFoundException ex) {
+            return failure(400, ex.getMessage(), "CARD_NOT_FOUND", false);
+        } catch (CardSecurityException ex) {
+            return failure(403, ex.getMessage(), "CARD_FORBIDDEN", false);
+        } catch (CardStateConflictException ex) {
+            return failure(409, ex.getMessage(), "CARD_STATE_CONFLICT", false);
+        } catch (IllegalArgumentException ex) {
+            return failure(400, ex.getMessage(), "INVALID_SUBMISSION", true);
+        } catch (RuntimeException ex) {
+            log.error("[CardController] 审批处理异常", ex);
+            return failure(500, "审批未完成，请重试", "APPROVAL_ERROR", false);
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("code", 200);
-        body.put("message", completed.getResult().getMessage() == null ? "" : completed.getResult().getMessage());
-        body.put("ticketId", completed.getResult().getTicketId());
-        body.put("cardType", completed.getCardType());
-        body.put("actionId", completed.getActionId());
-        if (completed.getTurnId() != null) body.put("turnId", completed.getTurnId());
+        body.put("message", "提案已批准，等待执行");
+        body.put("actionId", approved.getActionId());
+        body.put("cardType", approved.getCardType());
+        body.put("approvalState", approved.getApprovalState());
+        body.put("executionState", approved.getExecutionState());
+        if (approved.getTurnId() != null) body.put("turnId", approved.getTurnId());
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 分步模式第二步：触发已批准提案的执行（执行前由统一调用入口按实时策略复核权限）。
+     */
+    @PostMapping(value = "/execute", consumes = "application/json")
+    public ResponseEntity<Map<String, Object>> executeApprovedCard(@RequestBody Map<String, String> request, Principal principal) {
+        String actionId = request == null ? null : request.get("actionId");
+        String sessionId = request == null ? null : request.get("sessionId");
+        ActionGate.SubmissionResult completed;
+        try {
+            completed = actionGate.executeApproved(actionId, sessionId, principal);
+        } catch (CardNotFoundException ex) {
+            return failure(400, ex.getMessage(), "CARD_NOT_FOUND", false);
+        } catch (CardSecurityException ex) {
+            return failure(403, ex.getMessage(), "CARD_FORBIDDEN", false);
+        } catch (CardStateConflictException ex) {
+            return failure(409, ex.getMessage(), "CARD_STATE_CONFLICT", false);
+        } catch (IllegalArgumentException ex) {
+            return failure(400, ex.getMessage(), "INVALID_REQUEST", false);
+        } catch (CardExecutionUnknownException ex) {
+            return failure(500, ex.getMessage(), "EXECUTION_UNKNOWN", false);
+        } catch (RuntimeException ex) {
+            log.error("[CardController] 执行已批准提案异常", ex);
+            return failure(500, "执行未完成，请核查动作状态", "EXECUTION_ERROR", false);
+        }
+        notifyReceiptBestEffort(completed);
+        return buildSuccessResponse(completed);
     }
 
     @PostMapping(value = "/cancel", consumes = "application/json")
@@ -88,7 +136,7 @@ public class CardInteractionController {
         String sessionId = request == null ? null : request.get("sessionId");
         ActionGate.SubmissionResult reconciled;
         try {
-            reconciled = actionGate.reconcile(actionId, sessionId);
+            reconciled = actionGate.reconcile(actionId, sessionId, principal);
         } catch (CardNotFoundException ex) {
             return failure(400, ex.getMessage(), "CARD_NOT_FOUND", false);
         } catch (CardSecurityException ex) {
@@ -111,6 +159,27 @@ public class CardInteractionController {
         body.put("actionId", reconciled.getActionId());
         if (reconciled.getTurnId() != null) body.put("turnId", reconciled.getTurnId());
         body.put("state", "SUBMITTED");
+        return ResponseEntity.ok(body);
+    }
+
+    private void notifyReceiptBestEffort(ActionGate.SubmissionResult completed) {
+        try {
+            if (ssePublisher != null) ssePublisher.sendCardReceipt(completed.getSessionId(), completed.getTurnId(),
+                    completed.getActionId(), completed.getResult().getTicketId(),
+                    "\n\n> 表单已确认提交，关联单号：`" + completed.getResult().getTicketId() + "`\n");
+        } catch (RuntimeException ex) {
+            log.warn("[CardController] 已归档，但回执通知未送达 actionId={}", completed.getActionId(), ex);
+        }
+    }
+
+    private ResponseEntity<Map<String, Object>> buildSuccessResponse(ActionGate.SubmissionResult completed) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", 200);
+        body.put("message", completed.getResult().getMessage() == null ? "" : completed.getResult().getMessage());
+        body.put("ticketId", completed.getResult().getTicketId());
+        body.put("cardType", completed.getCardType());
+        body.put("actionId", completed.getActionId());
+        if (completed.getTurnId() != null) body.put("turnId", completed.getTurnId());
         return ResponseEntity.ok(body);
     }
 

@@ -5,24 +5,27 @@ import com.example.springai.core.card.CardSubmitHandler;
 import com.example.springai.core.card.action.ActionAuthorizer;
 import com.example.springai.core.card.action.ActionGate;
 import com.example.springai.core.context.TurnCheckpointStore;
+import com.example.springai.core.tool.UnifiedInvocationGateway;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import java.util.List;
 
-/** 无认证授权插件时默认拒绝真实写操作。 */
+/** 无认证授权插件时默认拒绝真实写操作；将 ActionGate 与 UnifiedInvocationGateway 装配连接。 */
 @Configuration(proxyBeanMethods = false)
 public class ActionGateConfiguration {
     @Bean
     public ActionGate actionGate(CardRegistry registry, List<CardSubmitHandler> handlers,
                                  ObjectProvider<ActionAuthorizer> authorizers,
                                  ObjectProvider<TurnCheckpointStore> checkpointStores,
+                                 ObjectProvider<UnifiedInvocationGateway> invocationGateways,
                                  @Value("${agentflow.actions.allow-mock-submissions:false}") boolean allowMock,
                                  @Value("${agentflow.actions.real-writes-enabled:false}") boolean enableReal) {
         return new ActionGate(registry, handlers,
                 authorizers.getIfAvailable(() -> ActionAuthorizer.DENY_ALL),
                 allowMock, enableReal,
-                checkpointStores.getIfAvailable());
+                checkpointStores.getIfAvailable(),
+                invocationGateways.getIfAvailable());
     }
 }

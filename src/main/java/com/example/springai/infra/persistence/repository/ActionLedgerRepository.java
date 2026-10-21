@@ -31,7 +31,8 @@ public interface ActionLedgerRepository extends JpaRepository<ActionLedgerEntity
             "e.submitTime = :submitTime " +
             "WHERE e.actionId = :actionId " +
             "AND e.issuanceId = :expectedIssuanceId " +
-            "AND e.cardState = :expectedCardState")
+            "AND e.cardState = :expectedCardState " +
+            "AND (e.approvalState = 'PENDING' OR :newCardState <> 'ISSUED')")
     int casTransition(@Param("actionId") String actionId,
                       @Param("expectedIssuanceId") String expectedIssuanceId,
                       @Param("expectedCardState") String expectedCardState,

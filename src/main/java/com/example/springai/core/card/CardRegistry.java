@@ -17,6 +17,10 @@ public interface CardRegistry {
     default CardRecord claim(CardRecord expected, String actorId, Map<String, Object> submittedValues) {
         return claim(expected);
     }
+    /** 分步审批：将待确认提案原子标记为已批准（APPROVED + NOT_STARTED），尚未进入执行器。 */
+    default CardRecord approve(CardRecord expected, String actorId, Map<String, Object> submittedValues) {
+        return expected;
+    }
     void validate(CardRecord record, Map<String, Object> submittedValues);
     default Map<String, Object> reconstructSafeFormValues(CardRecord record, Map<String, Object> values) {
         return CardFormValues.validateAndMerge(record, values);
@@ -33,6 +37,10 @@ public interface CardRegistry {
     CardRecord cancel(CardRecord expected, String reason);
     /** 仅用于能够证明尚未进入执行器的失败。执行后异常必须调用 markExecutionUnknown。 */
     void fail(String actionId, String reason, boolean allowRetry);
+    /** 在统一调用入口执行前因实时权限被撤销而拒绝（尚未触发外部副作用，标记为 REJECTED + FAILED）。 */
+    default void rejectBeforeExecution(String actionId, String reason) {
+        fail(actionId, reason, false);
+    }
     void markExecutionUnknown(String actionId, String reason);
     Optional<CardRecord> getRecord(String actionId);
     default boolean isExpired(CardRecord record) {

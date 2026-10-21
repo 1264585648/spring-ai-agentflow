@@ -110,6 +110,55 @@ public class InMemoryCardRegistry implements CardRegistry {
     }
 
     @Override
+    public synchronized CardRecord approve(CardRecord expected, String actorId, Map<String, Object> submittedValues) {
+        Objects.requireNonNull(expected, "expected");
+        CardRecord current = requireRecord(expected.getActionId());
+        if (expected.getIssuanceId() == null || !expected.getIssuanceId().equals(current.getIssuanceId())) {
+            throw new CardStateConflictException("提案签发版本已变化，拒绝过时的审批");
+        }
+        if (!Objects.equals(current.getSessionId(), expected.getSessionId())) {
+            throw new CardSecurityException("越权操作拦截：卡片不属于当前会话");
+        }
+        if (current.getState() == CardState.EXPIRED) {
+            throw new CardNotFoundException("卡片已过期");
+        }
+        long now = clock.millis();
+        if (current.isExpired(now)) {
+            current.setState(CardState.EXPIRED);
+            if (ledgerPort != null) {
+                ledgerPort.casTransition(current.getActionId(), current.getIssuanceId(), CardState.ISSUED, copyRecord(current));
+            }
+            throw new CardNotFoundException("卡片已过期");
+        }
+        if (current.getState() != CardState.ISSUED || current.getApprovalState() != ApprovalState.PENDING) {
+            throw new CardStateConflictException("提案当前状态不可再次审批: " + current.getApprovalState());
+        }
+        CardRecord updated = copyRecord(current);
+        updated.setState(CardState.ISSUED);
+        updated.setApprovalState(ApprovalState.APPROVED);
+        updated.setExecutionState(ExecutionState.NOT_STARTED);
+        if (actorId != null) {
+            updated.setActorId(actorId);
+        }
+        if (submittedValues != null) {
+            updated.setSubmittedValues(new LinkedHashMap<>(submittedValues));
+        }
+        if (ledgerPort != null && !ledgerPort.casTransition(current.getActionId(), current.getIssuanceId(), CardState.ISSUED, updated)) {
+            throw new CardStateConflictException("并发审批冲突：提案状态已变更");
+        }
+        current.setState(CardState.ISSUED);
+        current.setApprovalState(ApprovalState.APPROVED);
+        current.setExecutionState(ExecutionState.NOT_STARTED);
+        if (actorId != null) {
+            current.setActorId(actorId);
+        }
+        if (submittedValues != null) {
+            current.setSubmittedValues(new LinkedHashMap<>(submittedValues));
+        }
+        return copyRecord(current);
+    }
+
+    @Override
     public synchronized CardRecord claim(String actionId, String sessionId) {
         requireText(sessionId, "sessionId");
         CardRecord current = requireRecord(actionId);
@@ -127,6 +176,9 @@ public class InMemoryCardRegistry implements CardRegistry {
         CardRecord current = requireRecord(expected.getActionId());
         if (expected.getIssuanceId() == null || !expected.getIssuanceId().equals(current.getIssuanceId())) {
             throw new CardStateConflictException("提案签发版本已变化，拒绝执行过时的批准");
+        }
+        if (expected.getApprovalState() != null && current.getApprovalState() != expected.getApprovalState()) {
+            throw new CardStateConflictException("并发状态冲突：提案审批态已变更为 " + current.getApprovalState());
         }
         return claimInternal(current, expected.getSessionId(), actorId, submittedValues);
     }
@@ -264,6 +316,21 @@ public class InMemoryCardRegistry implements CardRegistry {
                 : record.isExpired(now) ? CardState.EXPIRED : CardState.ISSUED);
         if (ledgerPort != null) {
             ledgerPort.updateState(actionId, CardState.SUBMITTING, copyRecord(record));
+        }
+    }
+
+    @Override
+    public synchronized void rejectBeforeExecution(String actionId, String reason) {
+        CardRecord record = requireRecord(actionId);
+        CardState previousState = record.getState();
+        long now = clock.millis();
+        record.setState(CardState.FAILED);
+        record.setApprovalState(ApprovalState.REJECTED);
+        record.setExecutionState(ExecutionState.FAILED);
+        record.setFailReason(reason);
+        record.setSubmitTime(now);
+        if (ledgerPort != null) {
+            ledgerPort.updateState(actionId, previousState, copyRecord(record));
         }
     }
 

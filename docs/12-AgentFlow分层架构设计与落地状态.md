@@ -214,7 +214,7 @@ SPI 分为两类，分别采用不同的机制：
 - [x] 外部写成功、结果落库前崩溃：恢复后识别已有结果或进入对账，不盲目重做
 - [x] 等待确认时进程重启：回合可恢复，过期或已取消的审批不能继续执行
 - [x] 等待确认期间卸载工具：按版本规则重新审批或取消，不隐式切换实现
-- [ ] 审批后权限被撤销：执行前按实时授权拒绝
+- [x] 审批后权限被撤销：执行前按实时授权拒绝
 - [ ] 嵌套 Agent / Workflow 调用：共享预算、深度上限、取消传播生效，没有同邮箱互相等待
 - [ ] 客户端重连或消费过慢：事件按约定恢复，缓冲与日志增长受控
 - [ ] 异步激活返回前组件已退役：迟到结果不重新发布服务，已创建的资源被清理
@@ -230,17 +230,17 @@ SPI 分为两类，分别采用不同的机制：
 | Workflow 执行器 | 未实现 | L1 规则的 `WORKFLOW` 只是合法取值，没有执行器 | 新建 `agentflow-workflow` 模块 |
 | agent loop | 未实现 | 按 `DispatchStep` 顺序执行（上限 32 步）；工具循环由 Spring AI 隐式完成 | 独立的 loop，控制轮次与预算 |
 | 场景插件 | 部分实现 | `SubAgent` 以 Bean 注入，只拿只读工具；没有插件规范 | 定义插件构成与注册方式 |
-| 统一调用入口（授权） | 未实现 | 模型工具、L1 工具、卡片提交三条路径各自独立；授权只在 HTTP 层和真实写操作 | 三条路径收敛到一个入口，统一授权与副作用分级 |
+| 统一调用入口（授权） | 已实现 | `UnifiedInvocationGateway` 收敛 L1 直通、大模型 Function Calling 与 ActionGate 写执行三条路径；内置副作用分级与智能体白名单校验，并在执行前最后一刻通过 `InvocationAuthorizer` / `RevocableInvocationPolicy` 实时复核用户与目标资源权限 | — |
 | 回合生命周期 | 已实现 | `TurnTaskSupervisor`：准入上限 512、截止时间、取消；终止事件只发一次 | — |
 | 执行上下文 | 部分实现 | 有取消与截止时间；没有预算、调用深度、权限范围 | 按父子执行契约补齐 |
 | 插件运行时 | 未实现 | 依赖 Spring 启动期装配 | 按 Cordis 范式实现 |
 | StepResult | 已实现 | 步骤结构化结果，可携带动作提案 | 纳入持久化 |
 | 事件流 | 部分实现 | 事件带身份标识，丢弃过期回合的事件；没有事件日志和断线续传 | 事件日志 + `Last-Event-ID` |
 | 对话提交 | 部分实现 | 只有内存会话记忆 | 持久化回合结果与对话 |
-| ActionGate | 部分实现 | 校验签发记录、原子领取、工具版本锁定、崩溃后幂等对账恢复（`/card/reconcile`）；模拟与真实写入分开启用；只覆盖卡片提交 | 挂到统一调用入口之后 |
+| ActionGate | 已实现 | 支持一键审批+执行（`/card/submit`）与分步先审批后执行（`/card/approve` + `/card/execute`）、原子领取、工具版本锁定、崩溃后幂等对账恢复（`/card/reconcile`），写执行委托 `UnifiedInvocationGateway` 并在执行前实时重查权限 | — |
 | 回合挂起与恢复 | 已实现 | 下发卡片自动保存持久化 `TurnCheckpoint`（`WAITING_APPROVAL`）并释放会话槽位；审批/对账通过后恢复回合上下文，取消回合联动废止待确认卡片 | — |
 | 动作存储 | 已实现 | `ActionLedgerPort` + `JpaActionLedgerAdapter`（`sys_action_ledger`），审批态与执行态分离，重启后待审批与结果未知记录可恢复 | — |
-| 工具副作用分级 | 部分实现 | 写工具已去掉 `@Tool`，由边界测试守护；没有注册期分级 | 注册时声明读 / 写 / 高危 |
+| 工具副作用分级 | 已实现 | `@ToolMetadata` + `SideEffectLevel`（`READ` / `WRITE` / `CRITICAL`）+ `ToolDescriptor` 注册期声明；写/高危工具即使误标 `@Tool` 也严禁通过 L1 或模型只读入口调用 | — |
 | 模型网关抽象 | 未实现 | 内核直接使用 Spring AI | 引入 `ModelGateway` |
 | 编译依赖与 CI 守护 | 未实现 | 单模块；`core` 有 8 个文件依赖 web / infra / Spring AI；没有 ArchUnit；JDK 17 | 拆分 api / kernel，补 ArchUnit，升级 JDK 21 |
 | 入口访问控制 | 已实现 | 默认拒绝，只有本机 demo profile 放行 | — |

@@ -129,6 +129,11 @@ public class JpaActionLedgerAdapter implements ActionLedgerPort {
                         || current.getState() != expectedState) {
                     return false;
                 }
+                if (updated.getState() == CardState.ISSUED
+                        && updated.getApprovalState() == ApprovalState.APPROVED
+                        && current.getApprovalState() != ApprovalState.PENDING) {
+                    return false;
+                }
             }
             fallbackStore.put(actionId, InMemoryCardRegistry.copyRecord(updated));
             return true;

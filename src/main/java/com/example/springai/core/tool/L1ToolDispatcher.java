@@ -1,38 +1,65 @@
 package com.example.springai.core.tool;
 
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import com.example.springai.core.card.exception.CardSecurityException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.aop.support.AopUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.core.StandardReflectionParameterNameDiscoverer;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.util.Collections;
+import java.util.Map;
 
 /**
  * L1 Tool 调度器。
- * 只执行 {@link L1ToolCatalog} 中登记的 @Tool 方法，并按 JSON 绑定方法参数。
+ * 只执行 {@link L1ToolCatalog} 中登记的只读 @Tool 方法，并统一经由 {@link UnifiedInvocationGateway} 鉴权与执行。
  */
 @Component
 @Slf4j
-@RequiredArgsConstructor
 public class L1ToolDispatcher {
 
     private final L1ToolCatalog toolCatalog;
+    private final UnifiedInvocationGateway invocationGateway;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ParameterNameDiscoverer parameterNameDiscoverer = new StandardReflectionParameterNameDiscoverer();
 
+    public L1ToolDispatcher(L1ToolCatalog toolCatalog) {
+        this(toolCatalog, new UnifiedInvocationGateway());
+    }
+
+    @Autowired
+    public L1ToolDispatcher(
+            L1ToolCatalog toolCatalog,
+            @Autowired(required = false) UnifiedInvocationGateway invocationGateway) {
+        this.toolCatalog = toolCatalog;
+        this.invocationGateway = invocationGateway != null ? invocationGateway : new UnifiedInvocationGateway();
+    }
+
+    public UnifiedInvocationGateway getInvocationGateway() {
+        return invocationGateway;
+    }
+
     /**
-     * 调度执行指定的 Tool。
+     * 调度执行指定的只读 Tool（自动经由 UnifiedInvocationGateway 校验副作用级别与实时权限）。
      *
      * @param targetRef  目标标识，格式为 "beanName.methodName"，例如 "userAccountTool.queryBalance"
      * @param jsonParams 提取出来的结构化 JSON 参数字符串，例如 "{\"userId\": \"10001\"}"
      * @return 执行结果字符串
      */
     public String dispatch(String targetRef, String jsonParams) {
+        return dispatch(targetRef, jsonParams, null, null);
+    }
+
+    /**
+     * 带显式会话与操作人上下文的 L1 工具调用入口。
+     */
+    public String dispatch(String targetRef, String jsonParams, String sessionId, String actorId) {
         if (targetRef == null || !targetRef.contains(".")) {
             throw new IllegalArgumentException("非法的 targetRef 格式，期望为 beanName.methodName，当前为: " + targetRef);
         }
@@ -42,26 +69,63 @@ public class L1ToolDispatcher {
             throw new IllegalArgumentException("targetRef 只能包含单个点分隔符 (bean.method): " + targetRef);
         }
 
-        ToolInvocation invocation = toolCatalog.require(targetRef.trim(), jsonParams);
-        Object bean = toolCatalog.resolveBean(invocation);
-        Method targetMethod = AopUtils.selectInvocableMethod(invocation.method(), bean.getClass());
+        String normalizedRef = targetRef.trim();
+        ToolInvocation invocation = toolCatalog.require(normalizedRef, jsonParams);
+        ToolDescriptor descriptor = invocation.descriptor();
+        Map<String, Object> parsedArgs = parseArgsMap(jsonParams);
+        String targetResource = RevocableInvocationPolicy.extractTargetResource(parsedArgs);
 
-        try {
-            Object[] args = resolveArguments(targetMethod, jsonParams);
-            Object result = targetMethod.invoke(bean, args);
+        InvocationContext invContext = InvocationContext.builder()
+                .source(InvocationSource.L1_DIRECT)
+                .sessionId(sessionId)
+                .actorId(actorId)
+                .toolRef(normalizedRef)
+                .sideEffectLevel(descriptor != null ? descriptor.sideEffectLevel() : SideEffectLevel.READ)
+                .toolVersion(descriptor != null ? descriptor.version() : "v1")
+                .resourceType(descriptor != null ? descriptor.resourceType() : "GENERAL")
+                .targetResource(targetResource)
+                .arguments(parsedArgs)
+                .build();
 
-            if (result == null) {
-                return "";
+        return invocationGateway.invokeRead(invContext, () -> {
+            Object bean = toolCatalog.resolveBean(invocation);
+            Method targetMethod = AopUtils.selectInvocableMethod(invocation.method(), bean.getClass());
+            try {
+                Object[] args = resolveArguments(targetMethod, jsonParams);
+                Object result = targetMethod.invoke(bean, args);
+
+                if (result == null) {
+                    return "";
+                }
+                if (result instanceof String text) {
+                    return text;
+                }
+                return objectMapper.writeValueAsString(result);
+            } catch (CardSecurityException secEx) {
+                throw secEx;
+            } catch (Exception e) {
+                log.error("[L1ToolDispatcher] 执行 Tool 异常 targetRef={}: {}", targetRef, e.getMessage(), e);
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                if (cause instanceof CardSecurityException secCause) {
+                    throw secCause;
+                }
+                throw new IllegalStateException("执行工具方法失败: " + cause.getMessage(), e);
             }
-            if (result instanceof String text) {
-                return text;
-            }
-            return objectMapper.writeValueAsString(result);
-        } catch (Exception e) {
-            log.error("[L1ToolDispatcher] 执行 Tool 异常 targetRef={}: {}", targetRef, e.getMessage(), e);
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            throw new IllegalStateException("执行工具方法失败: " + cause.getMessage(), e);
+        });
+    }
+
+    private Map<String, Object> parseArgsMap(String jsonParams) {
+        if (jsonParams == null || jsonParams.isBlank()) {
+            return Collections.emptyMap();
         }
+        try {
+            JsonNode node = objectMapper.readTree(jsonParams.trim());
+            if (node != null && node.isObject()) {
+                return objectMapper.convertValue(node, new TypeReference<Map<String, Object>>() {});
+            }
+        } catch (Exception ignored) {
+        }
+        return Collections.emptyMap();
     }
 
     /**

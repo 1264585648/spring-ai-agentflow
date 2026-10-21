@@ -3,6 +3,8 @@ package com.example.springai.capability.ops.tool;
 import com.example.springai.capability.ops.model.OpsActionParam;
 import com.example.springai.capability.ops.model.OpsActionResult;
 import com.example.springai.capability.ops.port.OpsActionPort;
+import com.example.springai.core.tool.SideEffectLevel;
+import com.example.springai.core.tool.ToolMetadata;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -10,16 +12,17 @@ import org.springframework.stereotype.Component;
 /**
  * 运维操作与应急处置后端执行辅助类 (OpsActionTool)。
  * 保留现有 Java 调用接口，但不再作为模型工具或 L1 直通工具暴露。
- * 写执行方法不得添加 Spring AI 的工具注解；未来应由统一审批入口调用执行端口。
- * 当前方法本身不提供鉴权或审批保障，不能将普通 Java 可调用性视为已获授权。
+ * 写执行方法不得添加 Spring AI 的工具注解；通过 @ToolMetadata 显式声明 CRITICAL 高危副作用级别。
  */
 @Component("opsActionTool")
+@ToolMetadata(sideEffect = SideEffectLevel.CRITICAL, version = "v1", resourceType = "OPS_RUNTIME")
 @Slf4j
 @RequiredArgsConstructor
 public class OpsActionTool {
 
     private final OpsActionPort opsActionPort;
 
+    @ToolMetadata(sideEffect = SideEffectLevel.CRITICAL, version = "v1", resourceType = "OPS_RUNTIME")
     public String executeEmergencyAction(String service, String actionType, String targetIdentifier, String operator) {
         log.info("[OpsActionTool] 收到应急处置指令: service={}, actionType={}, target={}, operator={}",
                 service, actionType, targetIdentifier, operator);

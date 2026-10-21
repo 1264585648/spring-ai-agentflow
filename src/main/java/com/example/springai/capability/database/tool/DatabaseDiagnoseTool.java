@@ -5,6 +5,8 @@ import com.example.springai.capability.database.model.DbDiagnoseCriteria;
 import com.example.springai.capability.database.model.DbDiagnoseResult;
 import com.example.springai.capability.database.model.SlowQueryItem;
 import com.example.springai.capability.database.port.DatabaseDiagnosePort;
+import com.example.springai.core.tool.SideEffectLevel;
+import com.example.springai.core.tool.ToolMetadata;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Component;
  * 3. 依赖 DatabaseDiagnosePort SPI，支持生产与仿真无缝切换。
  */
 @Component("databaseDiagnoseTool")
+@ToolMetadata(sideEffect = SideEffectLevel.READ, version = "v1", resourceType = "DATABASE_DIAGNOSE")
 @Slf4j
 @RequiredArgsConstructor
 public class DatabaseDiagnoseTool {

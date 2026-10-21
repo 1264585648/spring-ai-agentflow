@@ -3,14 +3,33 @@ package com.example.springai.infra.client;
 import com.example.springai.core.agent.AgentDefinition;
 import com.example.springai.core.agent.AgentPromptRegistry;
 import com.example.springai.core.agent.AgentType;
-import lombok.RequiredArgsConstructor;
+import com.example.springai.core.tool.InvocationContext;
+import com.example.springai.core.tool.InvocationSource;
+import com.example.springai.core.tool.RevocableInvocationPolicy;
+import com.example.springai.core.tool.SideEffectLevel;
+import com.example.springai.core.tool.ToolDescriptor;
+import com.example.springai.core.tool.UnifiedInvocationGateway;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.support.ToolCallbacks;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.ai.tool.metadata.ToolMetadata;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
+import org.springframework.util.ClassUtils;
 import org.springframework.util.StringUtils;
 
 import java.beans.Introspector;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.*;
 
 /**
@@ -18,11 +37,11 @@ import java.util.*;
  * 职责:
  * 1. 结合基础 ChatClient.Builder 与 AgentPromptRegistry；
  * 2. 将 AgentDefinition 的系统提示词、模型名称、温度参数与挂载工具白名单转化为真实生效的运行期配置 (F09)；
- * 3. 严格执行最小权限原则：校验模型与工具白名单，拒绝未知模型或未授权工具，杜绝写工具旁路 (F01/F09)。
+ * 3. 基于工具注册期的 {@link ToolDescriptor}（{@link SideEffectLevel}）校验只读边界，拒绝写/高危工具挂载；
+ * 4. 将挂载的只读 @Tool 包装为受 {@link UnifiedInvocationGateway} 拦截的 ToolCallback，使大模型 Function Calling 统一收敛至同一调用入口。
  */
 @Component
 @Slf4j
-@RequiredArgsConstructor
 public class AgentChatClientFactory {
 
     private static final Set<String> ALLOWED_MODEL_PREFIXES = Set.of(
@@ -36,46 +55,47 @@ public class AgentChatClientFactory {
             "opsactiontool", "executeemergencyaction"
     );
 
+    private static final Set<String> KNOWN_SAFE_TOOL_BEANS = Set.of(
+            "logquerytool", "databasediagnosetool", "useraccounttool"
+    );
+
     private final ChatClient.Builder baseChatClientBuilder;
     private final AgentPromptRegistry promptRegistry;
+    private final UnifiedInvocationGateway invocationGateway;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * 为指定智能体枚举类型创建专用 ChatClient 实例
-     *
-     * @param agentType 智能体枚举
-     * @return 具备该智能体专属人设的 ChatClient
-     */
+    public AgentChatClientFactory(ChatClient.Builder baseChatClientBuilder, AgentPromptRegistry promptRegistry) {
+        this(baseChatClientBuilder, promptRegistry, new UnifiedInvocationGateway());
+    }
+
+    @Autowired
+    public AgentChatClientFactory(
+            ChatClient.Builder baseChatClientBuilder,
+            AgentPromptRegistry promptRegistry,
+            @Autowired(required = false) UnifiedInvocationGateway invocationGateway) {
+        this.baseChatClientBuilder = baseChatClientBuilder;
+        this.promptRegistry = promptRegistry;
+        this.invocationGateway = invocationGateway != null ? invocationGateway : new UnifiedInvocationGateway();
+    }
+
+    public UnifiedInvocationGateway getInvocationGateway() {
+        return invocationGateway;
+    }
+
     public ChatClient createClient(AgentType agentType) {
         return createClient(agentType != null ? agentType.getCode() : null);
     }
 
-    /**
-     * 为指定智能体枚举类型创建专用 ChatClient 实例并绑定专属 Tools
-     *
-     * @param agentType 智能体枚举
-     * @param tools 该智能体专属挂载的候选 Spring @Tool Bean (可变参数)
-     * @return 专属于该智能体的 ChatClient
-     */
     public ChatClient createClient(AgentType agentType, Object... tools) {
         return createClient(agentType != null ? agentType.getCode() : null, tools);
     }
 
-    /**
-     * 为指定智能体创建专用的 ChatClient 实例 (无挂载工具)
-     *
-     * @param agentCode 智能体唯一编码 (如 QUERY_REWRITER, MASTER_AGENT 等)
-     * @return 具备该智能体专属人设的 ChatClient
-     */
     public ChatClient createClient(String agentCode) {
         return createClient(agentCode, new Object[0]);
     }
 
     /**
-     * 为指定智能体创建专用的 ChatClient 实例并按最小权限绑定专属 Tools 与模型运行参数
-     *
-     * @param agentCode 智能体唯一编码
-     * @param tools 调用方提供的候选只读/查询 @Tool Bean 集合
-     * @return 专属于该智能体的 ChatClient
+     * 为指定智能体创建专用的 ChatClient 实例，按最小权限与只读副作用分级绑定 Tools，并收敛至 UnifiedInvocationGateway。
      */
     public ChatClient createClient(String agentCode, Object... tools) {
         String systemPrompt = promptRegistry != null
@@ -126,12 +146,18 @@ public class AgentChatClientFactory {
             }
         }
 
-        // 2. 按最小权限解析允许挂载的工具集合 (F01 / F09 / T02)
+        // 2. 按最小权限与工具只读副作用分级解析允许挂载的工具集合 (F01 / F09 / T02)
         Object[] effectiveTools = resolveAuthorizedTools(agentCode, defOpt.orElse(null), tools);
         if (effectiveTools.length > 0) {
-            ChatClient.Builder toolBuilder = builder.defaultTools(effectiveTools);
-            if (toolBuilder != null) {
-                builder = toolBuilder;
+            ToolCallback[] interceptedCallbacks = buildInterceptedCallbacks(agentCode, effectiveTools);
+            ChatClient.Builder cbBuilder = builder.defaultToolCallbacks(List.of(interceptedCallbacks));
+            if (cbBuilder != null) {
+                builder = cbBuilder;
+            } else {
+                ChatClient.Builder toolBuilder = builder.defaultTools(effectiveTools);
+                if (toolBuilder != null) {
+                    builder = toolBuilder;
+                }
             }
         }
 
@@ -153,6 +179,144 @@ public class AgentChatClientFactory {
                 .build();
     }
 
+    private ToolCallback[] buildInterceptedCallbacks(String agentCode, Object[] effectiveTools) {
+        Set<String> allowedToolIdentifiers = new LinkedHashSet<>();
+        Map<String, ToolDescriptor> methodDescMap = new HashMap<>();
+
+        for (Object toolBean : effectiveTools) {
+            Class<?> userClass = ClassUtils.getUserClass(toolBean.getClass());
+            ToolDescriptor beanDesc = ToolDescriptor.fromBeanInstance(toolBean);
+            allowedToolIdentifiers.add(beanDesc.beanName().toLowerCase(Locale.ROOT));
+
+            for (Method m : userClass.getMethods()) {
+                if (m.isBridge() || m.isSynthetic() || !Modifier.isPublic(m.getModifiers())) {
+                    continue;
+                }
+                Tool toolAnn = AnnotationUtils.findAnnotation(m, Tool.class);
+                if (toolAnn == null) {
+                    continue;
+                }
+                ToolDescriptor mDesc = ToolDescriptor.fromMethod(beanDesc.beanName(), userClass, m, true);
+                if (!mDesc.isReadOnly()) {
+                    throw new IllegalArgumentException("Non-read @Tool method (" + mDesc.sideEffectLevel()
+                            + ") cannot be attached to ChatClient: " + mDesc.toolRef());
+                }
+                String toolDefName = StringUtils.hasText(toolAnn.name()) ? toolAnn.name().trim() : m.getName();
+                allowedToolIdentifiers.add(m.getName().toLowerCase(Locale.ROOT));
+                allowedToolIdentifiers.add(toolDefName.toLowerCase(Locale.ROOT));
+                allowedToolIdentifiers.add(mDesc.toolRef().toLowerCase(Locale.ROOT));
+                methodDescMap.put(toolDefName, mDesc);
+                methodDescMap.put(m.getName(), mDesc);
+            }
+        }
+
+        ToolCallback[] rawCallbacks = ToolCallbacks.from(effectiveTools);
+        ToolCallback[] wrapped = new ToolCallback[rawCallbacks.length];
+        Set<String> fallbackAllowlist = Set.copyOf(allowedToolIdentifiers);
+        for (int i = 0; i < rawCallbacks.length; i++) {
+            ToolCallback raw = rawCallbacks[i];
+            String toolName = raw.getToolDefinition().name();
+            ToolDescriptor desc = methodDescMap.getOrDefault(toolName,
+                    new ToolDescriptor(toolName, toolName, toolName, SideEffectLevel.READ, "v1", "GENERAL"));
+            wrapped[i] = new GatewayInterceptedToolCallback(raw, agentCode, fallbackAllowlist, desc);
+        }
+        return wrapped;
+    }
+
+    private final class GatewayInterceptedToolCallback implements ToolCallback {
+        private final ToolCallback delegate;
+        private final String agentCode;
+        private final Set<String> fallbackAllowedTools;
+        private final ToolDescriptor descriptor;
+
+        private GatewayInterceptedToolCallback(
+                ToolCallback delegate,
+                String agentCode,
+                Set<String> fallbackAllowedTools,
+                ToolDescriptor descriptor) {
+            this.delegate = delegate;
+            this.agentCode = agentCode;
+            this.fallbackAllowedTools = fallbackAllowedTools;
+            this.descriptor = descriptor;
+        }
+
+        @Override
+        public ToolDefinition getToolDefinition() {
+            return delegate.getToolDefinition();
+        }
+
+        @Override
+        public ToolMetadata getToolMetadata() {
+            return delegate.getToolMetadata();
+        }
+
+        @Override
+        public String call(String toolInput) {
+            return invokeViaGateway(toolInput, () -> delegate.call(toolInput));
+        }
+
+        @Override
+        public String call(String toolInput, ToolContext toolContext) {
+            return invokeViaGateway(toolInput, () -> delegate.call(toolInput, toolContext));
+        }
+
+        private String invokeViaGateway(String toolInput, java.util.function.Supplier<String> supplier) {
+            Map<String, Object> args = parseJsonArgs(toolInput);
+            String targetResource = RevocableInvocationPolicy.extractTargetResource(args);
+            Set<String> liveAllowedTools = resolveLiveAllowedTools(agentCode, fallbackAllowedTools);
+            InvocationContext ctx = InvocationContext.builder()
+                    .source(InvocationSource.AGENT_MODEL_TOOL)
+                    .agentCode(agentCode)
+                    .agentAllowedTools(liveAllowedTools)
+                    .toolRef(descriptor.toolRef())
+                    .sideEffectLevel(descriptor.sideEffectLevel())
+                    .toolVersion(descriptor.version())
+                    .resourceType(descriptor.resourceType())
+                    .targetResource(targetResource)
+                    .arguments(args)
+                    .build();
+            return invocationGateway.invokeRead(ctx, supplier);
+        }
+    }
+
+    private Set<String> resolveLiveAllowedTools(String agentCode, Set<String> fallbackAllowedTools) {
+        if (promptRegistry == null || !StringUtils.hasText(agentCode)) {
+            return fallbackAllowedTools;
+        }
+        Optional<AgentDefinition> defOpt = promptRegistry.getAgent(agentCode);
+        if (defOpt == null || defOpt.isEmpty()) {
+            return fallbackAllowedTools;
+        }
+        AgentDefinition def = defOpt.get();
+        if (def.getAttachedTools() == null) {
+            return fallbackAllowedTools;
+        }
+        List<String> configured = parseAttachedTools(def.getAttachedTools());
+        if (configured.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Set<String> liveSet = new LinkedHashSet<>();
+        for (String raw : configured) {
+            liveSet.add(raw.trim().toLowerCase(Locale.ROOT));
+            liveSet.add(normalizeToolBeanName(raw).toLowerCase(Locale.ROOT));
+        }
+        return Set.copyOf(liveSet);
+    }
+
+    private Map<String, Object> parseJsonArgs(String json) {
+        if (!StringUtils.hasText(json)) {
+            return Collections.emptyMap();
+        }
+        try {
+            JsonNode node = objectMapper.readTree(json.trim());
+            if (node != null && node.isObject()) {
+                return objectMapper.convertValue(node, new TypeReference<Map<String, Object>>() {});
+            }
+        } catch (Exception ignored) {
+        }
+        return Collections.emptyMap();
+    }
+
     private void validateModelName(String modelName) {
         String lower = modelName.toLowerCase(Locale.ROOT);
         if (lower.contains("unknown") || lower.contains("invalid") || lower.contains("forbidden")) {
@@ -163,10 +327,6 @@ public class AgentChatClientFactory {
             throw new IllegalArgumentException("Unsupported or unknown modelName: " + modelName);
         }
     }
-
-    private static final Set<String> KNOWN_SAFE_TOOL_BEANS = Set.of(
-            "logquerytool", "databasediagnosetool", "useraccounttool"
-    );
 
     private Object[] resolveAuthorizedTools(String agentCode, AgentDefinition def, Object[] candidateTools) {
         // 1. 若存在 AgentDefinition，先严格校验其配置的 attachedTools 是否均为已知安全只读工具
@@ -191,43 +351,43 @@ public class AgentChatClientFactory {
             return new Object[0];
         }
 
-        // 2. 过滤并索引候选安全工具（严禁任何写操作工具进入候选池）
+        // 2. 基于工具注册期的 ToolDescriptor (SideEffectLevel) 过滤并索引候选安全只读工具
         Map<String, Object> safeToolMap = new LinkedHashMap<>();
         List<Object> allSafeTools = new ArrayList<>();
         for (Object tool : candidateTools) {
             if (tool == null) {
                 continue;
             }
-            String simpleName = tool.getClass().getSimpleName();
-            if (isForbiddenWriteToolName(simpleName)) {
-                throw new IllegalArgumentException("Direct write tool cannot be attached to ChatClient: " + simpleName);
+            Class<?> userClass = ClassUtils.getUserClass(tool.getClass());
+            String simpleName = userClass.getSimpleName();
+            ToolDescriptor descriptor = ToolDescriptor.fromBeanInstance(tool);
+            if (isForbiddenWriteToolName(simpleName) || descriptor.sideEffectLevel().requiresApproval()) {
+                if (isForbiddenWriteToolName(simpleName)) {
+                    throw new IllegalArgumentException("Direct write tool cannot be attached to ChatClient: " + simpleName);
+                }
+                throw new IllegalArgumentException("Unauthorized or non-read tool object (" + descriptor.sideEffectLevel()
+                        + ") passed to ChatClient: " + simpleName);
             }
             String beanName = Introspector.decapitalize(simpleName).toLowerCase(Locale.ROOT);
-            if (!KNOWN_SAFE_TOOL_BEANS.contains(beanName)) {
-                throw new IllegalArgumentException("Unauthorized tool object passed to ChatClient: " + simpleName);
-            }
             safeToolMap.put(beanName, tool);
             safeToolMap.put(simpleName.toLowerCase(Locale.ROOT), tool);
             allSafeTools.add(tool);
         }
 
-        // 当 AgentPromptRegistry 中无该智能体定义时（如 Mock 测试桩或通用 TROUBLESHOOT_AGENT），保留全部已校验的安全只读工具
         if (def == null) {
             return allSafeTools.toArray();
         }
 
-        // 若 attachedTools 字段未配置（null），按角色最小权限默认分配安全只读工具
         if (def.getAttachedTools() == null) {
             return resolveRoleDefaultTools(agentCode, safeToolMap);
         }
 
-        // 若显式配置了 attachedTools（如 "[]"），解析后无有效工具，严格代表禁用该智能体的全部工具 (F09 修复)
         if (authorizedBeanNames.isEmpty()) {
             log.info("[AgentChatClientFactory] 智能体 [{}] 显式配置了空工具白名单，严格禁用所有工具", agentCode);
             return new Object[0];
         }
 
-        // 3. 取 AgentDefinition 授权工具白名单与调用方候选工具的交集（确保 Agent A 绝不能获得 Agent B 的工具）
+        // 3. 取 AgentDefinition 授权工具白名单与调用方候选只读工具的交集
         Set<Object> selected = new LinkedHashSet<>();
         for (String authBean : authorizedBeanNames) {
             Object matched = safeToolMap.get(authBean);
@@ -311,4 +471,3 @@ public class AgentChatClientFactory {
         return false;
     }
 }
-

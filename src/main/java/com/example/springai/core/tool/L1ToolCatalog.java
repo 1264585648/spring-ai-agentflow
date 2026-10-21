@@ -1,9 +1,10 @@
 package com.example.springai.core.tool;
 
-import lombok.extern.slf4j.Slf4j;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -12,30 +13,31 @@ import org.springframework.core.StandardReflectionParameterNameDiscoverer;
 import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.util.ClassUtils;
-import org.springframework.ai.tool.annotation.Tool;
 
 import java.lang.reflect.Method;
-import java.util.Arrays;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
- * 已注册 @Tool 方法目录。
- * L1 直通只能调用这里的方法，不能按 Bean 名反射任意 public 方法。
+ * 已注册工具目录（含副作用安全分级元数据 ToolDescriptor）。
+ * L1 直通只能调用已注册且副作用级别为 {@link SideEffectLevel#READ} 的 @Tool 方法，
+ * 写操作或高危工具（WRITE / CRITICAL）严禁进入 L1 直通可调用池。
  */
 @Component
 @Slf4j
 public class L1ToolCatalog {
-
 
     private final ApplicationContext applicationContext;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ParameterNameDiscoverer parameterNameDiscoverer = new StandardReflectionParameterNameDiscoverer();
 
     private volatile Map<String, List<ToolInvocation>> tools = Map.of();
+    private volatile Map<String, ToolDescriptor> descriptors = Map.of();
 
     public L1ToolCatalog(ApplicationContext applicationContext) {
         this.applicationContext = applicationContext;
@@ -48,6 +50,7 @@ public class L1ToolCatalog {
         }
         ConfigurableListableBeanFactory factory = configurable.getBeanFactory();
         Map<String, List<ToolInvocation>> found = new HashMap<>();
+        Map<String, ToolDescriptor> foundDescriptors = new HashMap<>();
 
         for (String beanName : factory.getBeanDefinitionNames()) {
             Class<?> type;
@@ -57,10 +60,14 @@ public class L1ToolCatalog {
                 log.debug("[L1ToolCatalog] 跳过无法解析类型的 Bean {}: {}", beanName, ex.getMessage());
                 continue;
             }
-            if (type == null || !declaresTool(type)) {
+            if (type == null) {
                 continue;
             }
-            registerType(found, beanName, ClassUtils.getUserClass(type));
+            Class<?> userClass = ClassUtils.getUserClass(type);
+            if (!declaresToolOrMetadata(userClass)) {
+                continue;
+            }
+            registerType(found, foundDescriptors, beanName, userClass);
         }
 
         Map<String, List<ToolInvocation>> frozen = new HashMap<>();
@@ -70,7 +77,9 @@ public class L1ToolCatalog {
             methodCount += entry.getValue().size();
         }
         this.tools = Map.copyOf(frozen);
-        log.info("[L1ToolCatalog] 已登记 @Tool 目标 {} 个，方法 {} 个", this.tools.size(), methodCount);
+        this.descriptors = Map.copyOf(foundDescriptors);
+        log.info("[L1ToolCatalog] 已登记只读 @Tool 目标 {} 个（方法 {} 个），总工具描述符 {} 个",
+                this.tools.size(), methodCount, this.descriptors.size());
     }
 
     public Object resolveBean(ToolInvocation invocation) {
@@ -84,14 +93,26 @@ public class L1ToolCatalog {
         return tools.containsKey(targetRef.trim());
     }
 
+    public Optional<ToolDescriptor> findDescriptor(String targetRef) {
+        if (targetRef == null || targetRef.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(descriptors.get(targetRef.trim()));
+    }
+
     /**
-     * 按 bean.method 找到唯一可调用方法。同名重载按参数个数和参数名区分。
+     * 按 bean.method 找到唯一可调用的只读 @Tool 方法。同名重载按参数个数和参数名区分。
      */
     public ToolInvocation require(String targetRef, String jsonParams) {
         if (targetRef == null || targetRef.isBlank()) {
             throw new IllegalArgumentException("targetRef 不能为空");
         }
         String key = targetRef.trim();
+        ToolDescriptor desc = descriptors.get(key);
+        if (desc != null && !desc.isReadOnly()) {
+            throw new IllegalArgumentException("targetRef 属于写/高危工具 (" + desc.sideEffectLevel()
+                    + ")，不是可直通的只读 @Tool 方法: " + key);
+        }
         List<ToolInvocation> candidates = tools.get(key);
         if (candidates == null || candidates.isEmpty()) {
             throw new IllegalArgumentException("targetRef 不是已注册的 @Tool 方法: " + key);
@@ -102,28 +123,52 @@ public class L1ToolCatalog {
         return selectOverload(key, candidates, jsonParams);
     }
 
-    private void registerType(Map<String, List<ToolInvocation>> found, String beanName, Class<?> targetClass) {
+    private void registerType(
+            Map<String, List<ToolInvocation>> found,
+            Map<String, ToolDescriptor> foundDescriptors,
+            String beanName,
+            Class<?> targetClass) {
+        ToolMetadata classMeta = AnnotationUtils.findAnnotation(targetClass, ToolMetadata.class);
+        if (classMeta != null) {
+            foundDescriptors.put(beanName, new ToolDescriptor(
+                    beanName, "", beanName, classMeta.sideEffect(), classMeta.version(), classMeta.resourceType()));
+        }
+
         for (Method method : targetClass.getMethods()) {
             if (method.isBridge() || method.isSynthetic() || !Modifier.isPublic(method.getModifiers())) {
                 continue;
             }
-            if (AnnotationUtils.findAnnotation(method, Tool.class) == null) {
+            boolean hasTool = AnnotationUtils.findAnnotation(method, Tool.class) != null;
+            boolean hasMeta = AnnotationUtils.findAnnotation(method, ToolMetadata.class) != null || classMeta != null;
+            if (!hasTool && !hasMeta) {
                 continue;
             }
             String key = beanName + "." + method.getName();
+            ToolDescriptor descriptor = ToolDescriptor.fromMethod(beanName, targetClass, method, hasTool);
+            foundDescriptors.putIfAbsent(key, descriptor);
+
+            // 只有同时具备 @Tool 注解且副作用分级为 READ 的方法才允许进入 L1 直通可调用表
+            if (!hasTool || !descriptor.isReadOnly()) {
+                continue;
+            }
+
             String[] names = parameterNameDiscoverer.getParameterNames(method);
             List<ToolInvocation> methods = found.computeIfAbsent(key, ignored -> new ArrayList<>());
             boolean alreadyRegistered = methods.stream()
                     .anyMatch(existing -> Arrays.equals(existing.method().getParameterTypes(), method.getParameterTypes()));
             if (!alreadyRegistered) {
-                methods.add(new ToolInvocation(beanName, method, names));
+                methods.add(new ToolInvocation(beanName, method, names, descriptor));
             }
         }
     }
 
-    private boolean declaresTool(Class<?> type) {
+    private boolean declaresToolOrMetadata(Class<?> type) {
+        if (AnnotationUtils.findAnnotation(type, ToolMetadata.class) != null) {
+            return true;
+        }
         for (Method method : type.getMethods()) {
-            if (AnnotationUtils.findAnnotation(method, Tool.class) != null) {
+            if (AnnotationUtils.findAnnotation(method, Tool.class) != null
+                    || AnnotationUtils.findAnnotation(method, ToolMetadata.class) != null) {
                 return true;
             }
         }

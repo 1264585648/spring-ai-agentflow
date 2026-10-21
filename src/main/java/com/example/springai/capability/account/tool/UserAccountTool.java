@@ -1,18 +1,20 @@
 package com.example.springai.capability.account.tool;
 
+import com.example.springai.core.tool.SideEffectLevel;
+import com.example.springai.core.tool.ToolMetadata;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
 /**
  * 通用开源演示工具库：用户账户与资产查询
- * 核心设计: 标注 Spring AI 原生的 @Tool 注解。
+ * 核心设计: 标注 Spring AI 原生的 @Tool 注解与只读 @ToolMetadata。
  * 既可供 LLM 做 Function Calling 自主推理，也可被 L1 规则引擎零胶水代码直接反射调度。
  */
 @Component("userAccountTool")
+@ToolMetadata(sideEffect = SideEffectLevel.READ, version = "v1", resourceType = "USER_ACCOUNT")
 @Slf4j
 public class UserAccountTool {
-
 
     @Tool(description = "根据用户ID查询账户资产速查与待还余额")
     public String queryBalance(String userId) {

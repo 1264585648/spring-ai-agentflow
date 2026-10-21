@@ -18,6 +18,7 @@ import com.example.springai.core.routing.*;
 import com.example.springai.core.routing.dto.*;
 import com.example.springai.core.routing.impl.L1RuleResolver;
 import com.example.springai.core.routing.impl.L3MasterAgentResolver;
+import com.example.springai.core.tool.InvocationContext;
 import com.example.springai.core.tool.L1ToolDispatcher;
 import com.example.springai.infra.concurrent.TurnTaskSupervisor;
 import com.example.springai.infra.sse.SseAgentEventSink;
@@ -103,7 +104,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
         String turnId=blank(request.getTurnId())?UUID.randomUUID().toString():request.getTurnId().trim();
         if(turnId.length()>128) throw new IllegalArgumentException("turnId 过长");
         request.setTurnId(turnId);
-        AgentContext context=AgentContext.builder().sessionId(request.getSessionId()).turnId(turnId).query(request.getQuery())
+        AgentContext context=AgentContext.builder().sessionId(request.getSessionId()).turnId(turnId).userId(request.getUserId()).query(request.getQuery())
                 .effectiveQuery(request.getQuery()).deadlineMillis(System.currentTimeMillis()+turnTimeoutMillis).build();
         var rawSink=new SseAgentEventSink(context.getSessionId(),turnId,publisher,cards,memory,request.getQuery());
         context.setSink(new CancellableAgentEventSink(context,rawSink));
@@ -111,7 +112,8 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
         supervisor.submit(context,() -> run(context),rawSink::activate,rawSink::release);
     }
     private void run(AgentContext context) {
-        try {
+        try (var ignoredScope = InvocationContext.openScope(
+                context.getSessionId(), context.getTurnId(), context.getUserId(), null)) {
             ensureActive(context);
             if(memory!=null) {
                 List<ConversationMessage> history=memory.getRecentRounds(context.getSessionId(),6);

@@ -4,6 +4,8 @@ import com.example.springai.capability.log.model.LogEntry;
 import com.example.springai.capability.log.model.LogQueryCriteria;
 import com.example.springai.capability.log.model.LogQueryResult;
 import com.example.springai.capability.log.port.LogQueryPort;
+import com.example.springai.core.tool.SideEffectLevel;
+import com.example.springai.core.tool.ToolMetadata;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Component;
  * 3. 依赖 LogQueryPort SPI，实现能力与底层基础设施/Mock适配器的完全解耦。
  */
 @Component("logQueryTool")
+@ToolMetadata(sideEffect = SideEffectLevel.READ, version = "v1", resourceType = "SERVICE_LOG")
 @Slf4j
 @RequiredArgsConstructor
 public class LogQueryTool {
