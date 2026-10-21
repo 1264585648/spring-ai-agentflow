@@ -48,6 +48,35 @@ public class CardInteractionController {
         if (completed.getTurnId() != null) body.put("turnId", completed.getTurnId());
         return ResponseEntity.ok(body);
     }
+
+    @PostMapping(value = "/cancel", consumes = "application/json")
+    public ResponseEntity<Map<String, Object>> cancelCard(@RequestBody com.example.springai.core.card.dto.CardCancelRequest request, Principal principal) {
+        ActionGate.CancellationResult cancelled;
+        try {
+            cancelled = actionGate.cancel(request, principal);
+        } catch (CardNotFoundException ex) {
+            return failure(400, ex.getMessage(), "CARD_NOT_FOUND", false);
+        } catch (CardSecurityException ex) {
+            return failure(403, ex.getMessage(), "CARD_FORBIDDEN", false);
+        } catch (CardStateConflictException ex) {
+            return failure(409, ex.getMessage(), "CARD_STATE_CONFLICT", false);
+        } catch (IllegalArgumentException ex) {
+            return failure(400, ex.getMessage(), "INVALID_REQUEST", false);
+        } catch (RuntimeException ex) {
+            log.error("[CardController] 放弃处理异常", ex);
+            return failure(500, "放弃操作未完成，请重试", "CANCEL_ERROR", false);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", 200);
+        body.put("message", "提案已放弃");
+        body.put("actionId", cancelled.getActionId());
+        body.put("cardType", cancelled.getCardType());
+        if (cancelled.getTurnId() != null) {
+            body.put("turnId", cancelled.getTurnId());
+        }
+        body.put("state", cancelled.getState());
+        return ResponseEntity.ok(body);
+    }
     private static ResponseEntity<Map<String, Object>> failure(int status, String message, String type, boolean retryable) {
         return ResponseEntity.status(status).body(Map.of("code", status, "message", message == null ? "提交被拒绝" : message,
                 "errorType", type, "retryable", retryable));

@@ -99,6 +99,42 @@ public class InMemoryCardRegistry implements CardRegistry {
         record.setSubmitTime(clock.millis());
         return copyRecord(record);
     }
+
+    @Override
+    public synchronized CardRecord cancel(String actionId, String sessionId, String reason) {
+        requireText(sessionId, "sessionId");
+        return cancelInternal(requireRecord(actionId), sessionId, reason);
+    }
+
+    @Override
+    public synchronized CardRecord cancel(CardRecord expected, String reason) {
+        Objects.requireNonNull(expected, "expected");
+        CardRecord current = requireRecord(expected.getActionId());
+        if (expected.getIssuanceId() == null || !expected.getIssuanceId().equals(current.getIssuanceId())) {
+            throw new CardStateConflictException("提案签发版本已变化，拒绝执行过时的放弃操作");
+        }
+        return cancelInternal(current, expected.getSessionId(), reason);
+    }
+
+    private CardRecord cancelInternal(CardRecord record, String sessionId, String reason) {
+        if (!Objects.equals(record.getSessionId(), sessionId)) {
+            throw new CardSecurityException("越权操作拦截：卡片不属于当前会话");
+        }
+        if (record.getState() == CardState.EXPIRED) {
+            throw new CardNotFoundException("卡片已过期");
+        }
+        if (record.isExpired(clock.millis())) {
+            record.setState(CardState.EXPIRED);
+            throw new CardNotFoundException("卡片已过期");
+        }
+        if (record.getState() != CardState.ISSUED) {
+            throw new CardStateConflictException("卡片不可放弃，当前状态: " + record.getState());
+        }
+        record.setState(CardState.CANCELLED);
+        record.setFailReason(reason != null && !reason.isBlank() ? reason : "用户主动放弃");
+        record.setSubmitTime(clock.millis());
+        return copyRecord(record);
+    }
     @Override
     public void validate(CardRecord record, Map<String, Object> values) {
         CardFormValues.validateAndMerge(record, values);

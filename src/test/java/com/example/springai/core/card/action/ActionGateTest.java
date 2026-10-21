@@ -239,4 +239,36 @@ class ActionGateTest {
             executor.shutdownNow();
         }
     }
+
+    @Test
+    void cancelProposalSuccessfullyTransitionsToCancelledState() {
+        issue();
+        var cancelRequest = new com.example.springai.core.card.dto.CardCancelRequest("act-1", "session-A", "不再需要");
+        var result = mockGate().cancel(cancelRequest, null);
+        assertEquals("act-1", result.getActionId());
+        assertEquals("CANCELLED", result.getState());
+        assertEquals(CardState.CANCELLED, registry.getRecord("act-1").orElseThrow().getState());
+    }
+
+    @Test
+    void cancelledProposalCannotBeSubmittedOrCancelledAgain() {
+        CardSubmitRequest submitRequest = issue();
+        var cancelRequest = new com.example.springai.core.card.dto.CardCancelRequest("act-1", "session-A", "不再需要");
+        mockGate().cancel(cancelRequest, null);
+
+        // 已处于 CANCELLED 状态，再次提交应报 409
+        assertThrows(CardStateConflictException.class, () -> mockGate().submit(submitRequest, null));
+        assertEquals(0, executions.get());
+
+        // 再次调用 cancel 也应报 409
+        assertThrows(CardStateConflictException.class, () -> mockGate().cancel(cancelRequest, null));
+    }
+
+    @Test
+    void wrongSessionCannotCancelProposal() {
+        issue();
+        var cancelRequest = new com.example.springai.core.card.dto.CardCancelRequest("act-1", "session-B", "非法跨会话");
+        assertThrows(CardSecurityException.class, () -> mockGate().cancel(cancelRequest, null));
+        assertEquals(CardState.ISSUED, registry.getRecord("act-1").orElseThrow().getState());
+    }
 }

@@ -98,6 +98,13 @@ class SecurityAndWiringVerificationTest {
         int before = modelRequests.size();
         assertThrows(IllegalArgumentException.class, () -> factory.createClient("LOG_DIAGNOSE_AGENT", logs));
         assertEquals(before, modelRequests.size(), "非法工具配置必须在调用模型前被拒绝");
+
+        // 显式配置 [] 时必须严格禁用全部工具，绝不回退角色默认工具
+        definition.setAttachedTools("[]");
+        registry.registerOrUpdate(definition);
+        var disabledOptions = executeAndObserve("LOG_DIAGNOSE_AGENT", "无工具问答");
+        assertTrue(disabledOptions.getToolCallbacks() == null || disabledOptions.getToolCallbacks().isEmpty(),
+                "显式配置 [] 时必须严格禁用全部工具，绝不回退角色默认工具");
     }
 
     @Test

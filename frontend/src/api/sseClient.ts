@@ -122,6 +122,13 @@ export class SseChatClient {
       throw new CardSubmissionError('提交回执未确认，请先核查动作状态；不要重复提交或重新发起相同操作', false, 'RESPONSE_UNKNOWN');
     }
   }
+  public async cancelCard(actionId: string, sessionId: string, reason = '用户主动放弃') {
+    return this.requestJson('/api/v1/card/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actionId, sessionId, reason }),
+    });
+  }
   public getCommandPalette() { return this.requestJson('/api/v1/commands/palette', { method: 'GET' }, 10000, false); }
   public close() {
     const old = this.eventSource; this.eventSource = null; old?.close();

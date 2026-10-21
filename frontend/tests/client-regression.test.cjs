@@ -106,3 +106,20 @@ test('card body timeout is an unknown execution outcome', async () => {
   global.fetch = async () => ({ok:true,status:200,text:() => new Promise(() => {})});
   await assert.rejects(submit, e => !e.retryable && e.errorType === 'RESPONSE_UNKNOWN');
 });
+
+test('cancelCard sends POST /api/v1/card/cancel and returns CANCELLED receipt', async () => {
+  let capturedUrl = '';
+  let capturedBody = null;
+  global.fetch = async (url, init) => {
+    capturedUrl = url;
+    capturedBody = JSON.parse(init.body);
+    return new Response(JSON.stringify({code:200, actionId:'act-1', state:'CANCELLED'}), {
+      status: 200,
+      headers: {'Content-Type': 'application/json'}
+    });
+  };
+  const receipt = await new SseChatClient(30).cancelCard('act-1', 'sess-1', '用户主动放弃');
+  assert.equal(capturedUrl, '/api/v1/card/cancel');
+  assert.deepEqual(capturedBody, {actionId:'act-1', sessionId:'sess-1', reason:'用户主动放弃'});
+  assert.equal(receipt.state, 'CANCELLED');
+});

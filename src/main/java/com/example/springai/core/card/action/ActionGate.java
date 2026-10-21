@@ -73,6 +73,20 @@ public final class ActionGate {
             throw new CardExecutionUnknownException(ex);
         }
     }
+    public CancellationResult cancel(com.example.springai.core.card.dto.CardCancelRequest request, Principal principal) {
+        if (request == null) throw new IllegalArgumentException("取消请求不能为空");
+        String actionId = required(request.getActionId(), "actionId");
+        String sessionId = required(request.getSessionId(), "sessionId");
+        CardRecord proposal = registry.getRecord(actionId).orElseThrow(() -> new CardNotFoundException("卡片不存在或已过期"));
+        if (!sessionId.equals(proposal.getSessionId())) {
+            throw new CardSecurityException("会话与服务端签发记录不一致");
+        }
+        if (proposal.getState() != CardState.ISSUED) {
+            throw new CardStateConflictException("卡片不可放弃，当前状态: " + proposal.getState());
+        }
+        CardRecord cancelled = registry.cancel(proposal, request.getReason());
+        return new CancellationResult(actionId, sessionId, cancelled.getTurnId(), cancelled.getCardType(), cancelled.getState().name());
+    }
     @Data
     public static final class SubmissionResult {
         private final String actionId;
@@ -86,6 +100,21 @@ public final class ActionGate {
             this.turnId = turnId;
             this.cardType = cardType;
             this.result = result;
+        }
+    }
+    @Data
+    public static final class CancellationResult {
+        private final String actionId;
+        private final String sessionId;
+        private final String turnId;
+        private final String cardType;
+        private final String state;
+        public CancellationResult(String actionId, String sessionId, String turnId, String cardType, String state) {
+            this.actionId = actionId;
+            this.sessionId = sessionId;
+            this.turnId = turnId;
+            this.cardType = cardType;
+            this.state = state;
         }
     }
     private static String required(String value, String field) {

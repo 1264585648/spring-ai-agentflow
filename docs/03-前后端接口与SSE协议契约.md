@@ -47,12 +47,17 @@ sequenceDiagram
     Pipeline-->>UI: event: recommend_questions
     Pipeline-->>UI: event: done（回合结束，连接保持）
 
-    Note over UI, SPI: 5. 用户确认提交
-    UI->>Card: POST /api/v1/card/submit {actionId, sessionId, cardType, formValues}
-    Card->>SPI: 按 cardType 路由到业务处理器
-    SPI-->>Card: CardSubmitResult {ticketId}
-    Card-->>UI: 200 {ticketId}
-    Card-->>UI: event: message（提交确认提示）
+    Note over UI, SPI: 5. 用户确认提交或放弃提案
+    alt 用户确认提交
+        UI->>Card: POST /api/v1/card/submit {actionId, sessionId, cardType, formValues}
+        Card->>SPI: 按 cardType 路由到业务处理器
+        SPI-->>Card: CardSubmitResult {ticketId}
+        Card-->>UI: 200 {ticketId}
+        Card-->>UI: event: message（提交确认提示）
+    else 用户主动放弃
+        UI->>Card: POST /api/v1/card/cancel {actionId, sessionId, reason}
+        Card-->>UI: 200 {state: "CANCELLED"}
+    end
 ```
 
 ---
@@ -139,9 +144,53 @@ sequenceDiagram
   | 同一 `actionId` 在执行中或已完成终态下重复提交 | 409 | 409 |
   | 业务处理器返回失败或抛出异常（状态自动回退为 `ISSUED` 允许重试，幂等键防重） | 500 | 500 |
 
-* **服务端校验（✅ 已实现）**：提交时服务端强制校验 `actionId` 由服务端签发且属于当前非空 `sessionId`、卡片处于待提交状态且未超过 15 分钟有效期（TTL）、处理器按服务端签发记录中的 `cardType` 绑定路由、`editable=false` 只读字段未被篡改、可编辑字段满足 `minLimit` / `maxLimit` / `required`，并按白名单重建干净的执行参数（忽略客户端夹带的 `operator` 等未授权字段）。
+### 3.5 取消正在执行的回合 ✅
+* **路径**：`POST /api/v1/chat/cancel?sessionId={sessionId}&turnId={turnId}`
+* **说明**：取消客户端当前正在进行中的问答回合，中断后台工作线程并拦截迟到的 SSE 输出。
+* **参数**：
+  | 参数 | 类型 | 必填 | 说明 |
+  | :--- | :--- | :--- | :--- |
+  | `sessionId` | String | 是 | 1～128 字符非空会话标识 |
+  | `turnId` | String | 是 | 1～128 字符非空回合标识 |
+* **响应体**：
+```json
+{
+  "code": 200,
+  "turnId": "turn_1760410000_a1b2c3",
+  "cancelled": true
+}
+```
 
-### 3.5 快捷指令面板 ✅
+### 3.6 放弃交互卡片 ✅
+* **路径**：`POST /api/v1/card/cancel`
+* **说明**：用户在前端交互卡片点击“放弃”按钮，将服务端卡片记录从 `ISSUED` 原子流转为 `CANCELLED` 终态，防范未确认提案长期悬挂或并发误提交。
+* **请求体**：
+```json
+{
+  "actionId": "act_9f8a32b14e9a",
+  "sessionId": "sess_88921a9f-4310",
+  "reason": "用户主动放弃处置"
+}
+```
+* **成功响应**：
+```json
+{
+  "code": 200,
+  "message": "提案已放弃",
+  "actionId": "act_9f8a32b14e9a",
+  "cardType": "TROUBLESHOOT_ACTION",
+  "turnId": "turn_1760410000_a1b2c3",
+  "state": "CANCELLED"
+}
+```
+* **错误码**：
+  | 场景 | HTTP | `code` | 说明 |
+  | :--- | :--- | :--- | :--- |
+  | `actionId` 或 `sessionId` 为空 / 卡片不存在 / 已过期 | 400 | 400 | 无效请求或记录已回收 |
+  | 跨会话越权操作他人卡片或缺少服务端身份 | 403 | 403 | 身份或会话归属校验失败 |
+  | 卡片非 `ISSUED` 状态（如已被提交 `SUBMITTED`、正在提交 `SUBMITTING` 或已取消 `CANCELLED`） | 409 | 409 | 状态冲突，不可重复操作 |
+
+### 3.7 快捷指令面板 ✅
 * **路径**：`GET /api/v1/commands/palette`
 * **说明**：返回可用的 L1 快捷指令列表，供前端输入 `/` 时弹出面板。
 * **响应项**（`CommandPaletteItem`）：`code`、`prefix`、`name`、`template`、`description`、`targetType`、`icon`。

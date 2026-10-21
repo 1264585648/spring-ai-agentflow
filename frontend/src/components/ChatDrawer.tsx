@@ -13,7 +13,7 @@ import { Send, RefreshCw, Bot, User, Zap } from 'lucide-react';
 interface ChatDrawerProps { isOpen: boolean; onClose: () => void; caseId?: string; }
 
 export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId = 'CASE_10086' }) => {
-  const { messages, isStreaming, connectionState, currentProgress, sendMessage, submitCard } = useChatSession(isOpen, caseId);
+  const { messages, isStreaming, connectionState, currentProgress, sendMessage, submitCard, cancelCard } = useChatSession(isOpen, caseId);
   const [inputQuery, setInputQuery] = useState('');
   const [paletteCommands, setPaletteCommands] = useState<CommandPaletteItem[]>([]);
   const [showPalette, setShowPalette] = useState(false);
@@ -113,7 +113,10 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ isOpen, onClose, caseId 
                 const single = message.interactiveCard?.actionId === card.actionId;
                 return <InteractiveCard key={card.actionId} card={card}
                   submitted={state ? state.submitted : single ? message.cardSubmitted : false}
-                  ticketId={state ? state.ticketId : single ? message.ticketId : undefined} onSubmit={submitCard} />;
+                  ticketId={state ? state.ticketId : single ? message.ticketId : undefined}
+                  cancelled={state?.cancelled || state?.state === 'CANCELLED'}
+                  onSubmit={submitCard}
+                  onCancel={cancelCard} />;
               })}
               {message.role === 'assistant' && message.recommendQuestions && <QuestionChips questions={message.recommendQuestions} onSelect={handleSendMessage} />}
             </div>

@@ -216,9 +216,15 @@ public class AgentChatClientFactory {
             return allSafeTools.toArray();
         }
 
-        if (authorizedBeanNames.isEmpty()) {
-            // 兼容空数组 "[]" 时按角色最小权限默认分配
+        // 若 attachedTools 字段未配置（null），按角色最小权限默认分配安全只读工具
+        if (def.getAttachedTools() == null) {
             return resolveRoleDefaultTools(agentCode, safeToolMap);
+        }
+
+        // 若显式配置了 attachedTools（如 "[]"），解析后无有效工具，严格代表禁用该智能体的全部工具 (F09 修复)
+        if (authorizedBeanNames.isEmpty()) {
+            log.info("[AgentChatClientFactory] 智能体 [{}] 显式配置了空工具白名单，严格禁用所有工具", agentCode);
+            return new Object[0];
         }
 
         // 3. 取 AgentDefinition 授权工具白名单与调用方候选工具的交集（确保 Agent A 绝不能获得 Agent B 的工具）

@@ -1,20 +1,24 @@
 import React, { useState } from 'react';
 import { InteractiveCardData } from '../types/chat';
 import { CardSubmissionError } from '../api/sseClient';
-import { FileCheck, Send, CheckCircle2, AlertCircle } from 'lucide-react';
+import { FileCheck, Send, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
 
 interface InteractiveCardProps {
   card: InteractiveCardData;
   submitted?: boolean;
   ticketId?: string;
+  cancelled?: boolean;
   onSubmit: (actionId: string, cardType: string, formValues: Record<string, any>) => Promise<string | void>;
+  onCancel?: (actionId: string, reason?: string) => Promise<any>;
 }
 
 export const InteractiveCard: React.FC<InteractiveCardProps> = ({
   card,
   submitted = false,
   ticketId,
+  cancelled = false,
   onSubmit,
+  onCancel,
 }) => {
   // 提取默认值
   const initialValues: Record<string, any> = {};
@@ -24,15 +28,33 @@ export const InteractiveCard: React.FC<InteractiveCardProps> = ({
 
   const [formData, setFormData] = useState<Record<string, any>>(initialValues);
   const [loading, setLoading] = useState<boolean>(false);
+  const [cancelling, setCancelling] = useState<boolean>(false);
+  const [isCancelled, setIsCancelled] = useState<boolean>(cancelled);
   const [successId, setSuccessId] = useState<string | undefined>(ticketId);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [retryBlocked, setRetryBlocked] = useState(false);
 
-  const isLocked = submitted || !!successId || retryBlocked;
+  const isLocked = submitted || !!successId || retryBlocked || isCancelled;
 
   const handleFieldChange = (fieldKey: string, val: any) => {
     if (isLocked) return;
     setFormData((prev) => ({ ...prev, [fieldKey]: val }));
+  };
+
+  const handleCancelSubmit = async () => {
+    if (isLocked || loading || cancelling) return;
+    setCancelling(true);
+    setErrorMsg(null);
+    try {
+      if (onCancel) {
+        await onCancel(card.actionId, '用户主动放弃');
+      }
+      setIsCancelled(true);
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : '放弃提案失败');
+    } finally {
+      setCancelling(false);
+    }
   };
 
   const handleConfirmSubmit = async () => {
@@ -99,6 +121,20 @@ export const InteractiveCard: React.FC<InteractiveCardProps> = ({
             gap: '4px'
           }}>
             <CheckCircle2 size={12} /> 已提交
+          </span>
+        )}
+        {isCancelled && !successId && (
+          <span style={{
+            fontSize: '12px',
+            backgroundColor: '#f1f5f9',
+            color: '#64748b',
+            padding: '2px 8px',
+            borderRadius: '999px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px'
+          }}>
+            <XCircle size={12} /> 已放弃
           </span>
         )}
       </div>
@@ -183,6 +219,10 @@ export const InteractiveCard: React.FC<InteractiveCardProps> = ({
           <div style={{ fontSize: '13px', color: '#15803d', fontWeight: 500 }}>
             流转单号：<strong>{successId}</strong>（已进入处理管道）
           </div>
+        ) : isCancelled ? (
+          <div style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>
+            已放弃该处置提案，系统未产生任何变更
+          </div>
         ) : (
           <div style={{ fontSize: '12px', color: '#94a3b8' }}>
             {retryBlocked ? '已停止再次提交，请先核查动作状态' : '请核验方案参数，确认后将调用后台处理器'}
@@ -190,26 +230,52 @@ export const InteractiveCard: React.FC<InteractiveCardProps> = ({
         )}
 
         {!isLocked && (
-          <button
-            onClick={handleConfirmSubmit}
-            disabled={loading}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: loading ? '#93c5fd' : '#2563eb',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '13px',
-              fontWeight: 500,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <Send size={14} />
-            {loading ? '正在提交...' : card.confirmButtonText || '确认提交'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {onCancel && (
+              <button
+                type="button"
+                onClick={handleCancelSubmit}
+                disabled={loading || cancelling}
+                style={{
+                  padding: '8px 14px',
+                  backgroundColor: '#ffffff',
+                  color: '#64748b',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  cursor: (loading || cancelling) ? 'not-allowed' : 'pointer',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <XCircle size={14} />
+                {cancelling ? '正在放弃...' : card.cancelButtonText || '放弃'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleConfirmSubmit}
+              disabled={loading || cancelling}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: loading ? '#93c5fd' : '#2563eb',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: (loading || cancelling) ? 'not-allowed' : 'pointer',
+                fontSize: '13px',
+                fontWeight: 500,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Send size={14} />
+              {loading ? '正在提交...' : card.confirmButtonText || '确认提交'}
+            </button>
+          </div>
         )}
       </div>
     </div>

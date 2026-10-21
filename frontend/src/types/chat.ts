@@ -69,7 +69,7 @@ export interface ChatMessage {
   interactiveCards?: InteractiveCardData[];
   cardSubmitted?: boolean;
   ticketId?: string;
-  submittedCardMap?: Record<string, { submitted: boolean; ticketId?: string }>;
+  submittedCardMap?: Record<string, { submitted: boolean; ticketId?: string; cancelled?: boolean; state?: string }>;
   recommendQuestions?: string[];
   errorText?: string;
   retryQuery?: string;

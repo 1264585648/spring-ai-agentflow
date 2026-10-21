@@ -168,5 +168,20 @@ export function useChatSession(isOpen: boolean, caseId: string) {
     return response.ticketId as string;
   }, [sessionId]);
 
-  return { messages, isStreaming, connectionState, currentProgress, sendMessage, submitCard };
+  const cancelCard = useCallback(async (actionId: string, reason?: string) => {
+    const response = await chatClient.cancelCard(actionId, sessionId, reason);
+    setMessages(previous => previous.map(message => {
+      if (!ownsCard(message, actionId)) return message;
+      return {
+        ...message,
+        submittedCardMap: {
+          ...(message.submittedCardMap || {}),
+          [actionId]: { submitted: false, cancelled: true, state: 'CANCELLED' },
+        },
+      };
+    }));
+    return response;
+  }, [sessionId]);
+
+  return { messages, isStreaming, connectionState, currentProgress, sendMessage, submitCard, cancelCard };
 }

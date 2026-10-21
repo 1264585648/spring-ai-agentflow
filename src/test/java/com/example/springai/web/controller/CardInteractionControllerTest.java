@@ -73,4 +73,23 @@ class CardInteractionControllerTest {
         mvc.perform(post("/api/v1/card/submit").contentType(MediaType.APPLICATION_JSON).principal(()->"alice").header("X-User-Id","mallory").content(json)).andExpect(status().isOk());
         assertEquals(1,calls.get());
     }
+    @Test void cancelCardReturnsOkAndTransitionsToCancelled() {
+        issue(); var controller=controller(false);
+        var cancelReq=new CardCancelRequest("a","s","放弃处置");
+        var res=controller.cancelCard(cancelReq,null);
+        assertEquals(200,res.getStatusCode().value());
+        assertEquals("CANCELLED",res.getBody().get("state"));
+        assertEquals("a",res.getBody().get("actionId"));
+        assertEquals("old-turn",res.getBody().get("turnId"));
+        assertEquals(CardState.CANCELLED,registry.getRecord("a").orElseThrow().getState());
+        assertEquals(409,controller.cancelCard(cancelReq,null).getStatusCode().value());
+        assertEquals(409,controller.submitCard(new CardSubmitRequest("a","s","TEST",Map.of()),null).getStatusCode().value());
+    }
+    @Test void cancelCardWithWrongSessionReturns403() {
+        issue(); var controller=controller(false);
+        var cancelReq=new CardCancelRequest("a","wrong-session","放弃");
+        var res=controller.cancelCard(cancelReq,null);
+        assertEquals(403,res.getStatusCode().value());
+        assertEquals(CardState.ISSUED,registry.getRecord("a").orElseThrow().getState());
+    }
 }

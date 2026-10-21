@@ -349,18 +349,37 @@ public class TroubleshootSubAgent implements SubAgent {
             }
         }
 
+        ConnectionPoolMetrics poolMetrics = (dbResult != null) ? dbResult.getPoolMetrics() : null;
+        int suggestedPoolSize = calculateSuggestedMaxPoolSize(poolMetrics);
+        boolean poolUnderPressure = (poolMetrics != null && poolMetrics.getUsageRatio() >= 0.7);
+
+        // 如果没有慢查询会话，但连接池高负载，将目标指向服务连接池
+        if (!StringUtils.hasText(targetIdentifier) && poolUnderPressure) {
+            targetIdentifier = service + "-connection-pool";
+        }
+
         ActionProposal proposal = null;
         if (StringUtils.hasText(service) && StringUtils.hasText(targetIdentifier)) {
             String summaryText = evidenceList.isEmpty()
-                    ? "针对 " + service + " 紧急止血，隔离慢查询 " + targetIdentifier
+                    ? "针对 " + service + " 紧急止血，隔离目标 " + targetIdentifier
                     : "诊断依据 [" + service + "]: " + String.join("；", evidenceList);
+
+            String actionType;
+            if (targetIdentifier.endsWith("-connection-pool")) {
+                actionType = "临时扩容连接池";
+            } else if (poolUnderPressure) {
+                actionType = "Kill阻塞慢查询并临时扩容连接池";
+            } else {
+                actionType = "Kill阻塞慢查询";
+            }
+
             proposal = ActionProposal.builder()
                     .service(service)
-                    .actionType("Kill阻塞慢查询并临时扩容连接池")
+                    .actionType(actionType)
                     .targetIdentifier(targetIdentifier)
                     .riskLevel("HIGH")
                     .evidenceSummary(summaryText)
-                    .suggestedMaxPoolSize("80")
+                    .suggestedMaxPoolSize(String.valueOf(suggestedPoolSize))
                     .simulationMode(simulationMode)
                     .extraParameters(structuredData)
                     .build();
@@ -448,6 +467,20 @@ public class TroubleshootSubAgent implements SubAgent {
             }
         }
         return true;
+    }
+
+    /**
+     * 根据数据库连接池运行指标动态计算建议的最大连接池容量
+     * 策略: 扩容为当前最大容量的 1.5 倍向上取整，或活跃连接 + 20，取较大者，上限 500，下限 10
+     */
+    public static int calculateSuggestedMaxPoolSize(ConnectionPoolMetrics pool) {
+        if (pool == null || pool.getMaxPoolSize() <= 0) {
+            return 50;
+        }
+        int currentMax = pool.getMaxPoolSize();
+        int active = pool.getActiveConnections();
+        int dynamic = Math.max((int) Math.ceil(currentMax * 1.5), active + 20);
+        return Math.min(500, Math.max(10, dynamic));
     }
 
     private String buildFallbackExpertReply(String query, String service, List<StepResult> previousSteps) {

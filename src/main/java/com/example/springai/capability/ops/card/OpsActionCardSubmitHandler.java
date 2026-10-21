@@ -38,6 +38,8 @@ public class OpsActionCardSubmitHandler implements CardSubmitHandler {
         String action = required(values, "action_type");
         // 仅兼容已经签发的旧版展示值；未知自由文本不能直接成为执行命令。
         if ("Kill阻塞慢查询并临时扩容连接池".equals(action)) action = "KILL_SLOW_SESSION_AND_EXPAND_POOL";
+        else if ("Kill阻塞慢查询".equals(action)) action = "KILL_SLOW_SESSION";
+        else if ("临时扩容连接池".equals(action)) action = "EXPAND_POOL_LIMIT";
         if (!Set.of("KILL_SLOW_SESSION", "EXPAND_POOL_LIMIT", "KILL_SLOW_SESSION_AND_EXPAND_POOL", "RESTART_POD").contains(action)) {
             throw new IllegalArgumentException("不支持的运维动作类型");
         }

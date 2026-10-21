@@ -190,4 +190,24 @@ class TroubleshootSubAgentTest {
         verify(disconnectSink, never()).card(any());
         verify(disconnectSink, never()).recommend(anyList());
     }
+
+    @Test
+    @DisplayName("测试连接池建议扩容上限的策略计算公式 (T06)")
+    void testCalculateSuggestedMaxPoolSizePolicy() {
+        assertEquals(50, TroubleshootSubAgent.calculateSuggestedMaxPoolSize(null));
+        assertEquals(50, TroubleshootSubAgent.calculateSuggestedMaxPoolSize(
+                com.example.springai.capability.database.model.ConnectionPoolMetrics.builder().maxPoolSize(0).build()));
+
+        var normalPool = com.example.springai.capability.database.model.ConnectionPoolMetrics.builder()
+                .maxPoolSize(50).activeConnections(45).build();
+        assertEquals(75, TroubleshootSubAgent.calculateSuggestedMaxPoolSize(normalPool));
+
+        var crowdedPool = com.example.springai.capability.database.model.ConnectionPoolMetrics.builder()
+                .maxPoolSize(30).activeConnections(30).build();
+        assertEquals(50, TroubleshootSubAgent.calculateSuggestedMaxPoolSize(crowdedPool));
+
+        var hugePool = com.example.springai.capability.database.model.ConnectionPoolMetrics.builder()
+                .maxPoolSize(400).activeConnections(390).build();
+        assertEquals(500, TroubleshootSubAgent.calculateSuggestedMaxPoolSize(hugePool));
+    }
 }
