@@ -16,7 +16,13 @@ public final class CancellableAgentEventSink implements AgentEventSink {
     public boolean thinking(String value) { return active() && delegate.thinking(value); }
     public boolean progress(String stage,String description) { return active() && delegate.progress(stage,description); }
     public boolean message(String value) { return active() && delegate.message(value); }
-    public boolean card(InteractiveCard card) { return active() && delegate.card(card); }
+    public boolean card(InteractiveCard card) {
+        boolean sent = active() && delegate.card(card);
+        if (sent && card != null && card.getActionId() != null && !card.getActionId().isBlank()) {
+            context.setPendingActionId(card.getActionId());
+        }
+        return sent;
+    }
     public boolean recommend(List<String> values) { return active() && delegate.recommend(values); }
     public boolean done() { return active() && delegate.done(); }
     public boolean error(String value) { return delegate.error(value); }

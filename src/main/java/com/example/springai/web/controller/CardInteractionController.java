@@ -1,6 +1,7 @@
 package com.example.springai.web.controller;
 
 import com.example.springai.core.card.action.ActionGate;
+import com.example.springai.core.card.dto.CardCancelRequest;
 import com.example.springai.core.card.dto.CardSubmitRequest;
 import com.example.springai.core.card.exception.*;
 import com.example.springai.infra.sse.SseEventPublisher;
@@ -50,7 +51,7 @@ public class CardInteractionController {
     }
 
     @PostMapping(value = "/cancel", consumes = "application/json")
-    public ResponseEntity<Map<String, Object>> cancelCard(@RequestBody com.example.springai.core.card.dto.CardCancelRequest request, Principal principal) {
+    public ResponseEntity<Map<String, Object>> cancelCard(@RequestBody CardCancelRequest request, Principal principal) {
         ActionGate.CancellationResult cancelled;
         try {
             cancelled = actionGate.cancel(request, principal);
@@ -77,6 +78,42 @@ public class CardInteractionController {
         body.put("state", cancelled.getState());
         return ResponseEntity.ok(body);
     }
+
+    /**
+     * 未知执行结果对账恢复接口（只查询外部幂等回执并收敛账本与挂起回合，绝不重新发起外部写操作）。
+     */
+    @PostMapping(value = "/reconcile", consumes = "application/json")
+    public ResponseEntity<Map<String, Object>> reconcileCard(@RequestBody Map<String, String> request, Principal principal) {
+        String actionId = request == null ? null : request.get("actionId");
+        String sessionId = request == null ? null : request.get("sessionId");
+        ActionGate.SubmissionResult reconciled;
+        try {
+            reconciled = actionGate.reconcile(actionId, sessionId);
+        } catch (CardNotFoundException ex) {
+            return failure(400, ex.getMessage(), "CARD_NOT_FOUND", false);
+        } catch (CardSecurityException ex) {
+            return failure(403, ex.getMessage(), "CARD_FORBIDDEN", false);
+        } catch (CardStateConflictException ex) {
+            return failure(409, ex.getMessage(), "CARD_STATE_CONFLICT", false);
+        } catch (IllegalArgumentException ex) {
+            return failure(400, ex.getMessage(), "INVALID_REQUEST", false);
+        } catch (CardExecutionUnknownException ex) {
+            return failure(500, ex.getMessage(), "EXECUTION_UNKNOWN", false);
+        } catch (RuntimeException ex) {
+            log.error("[CardController] 对账处理异常", ex);
+            return failure(500, "对账未完成，请保持人工核查", "RECONCILE_ERROR", false);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", 200);
+        body.put("message", reconciled.getResult().getMessage() == null ? "" : reconciled.getResult().getMessage());
+        body.put("ticketId", reconciled.getResult().getTicketId());
+        body.put("cardType", reconciled.getCardType());
+        body.put("actionId", reconciled.getActionId());
+        if (reconciled.getTurnId() != null) body.put("turnId", reconciled.getTurnId());
+        body.put("state", "SUBMITTED");
+        return ResponseEntity.ok(body);
+    }
+
     private static ResponseEntity<Map<String, Object>> failure(int status, String message, String type, boolean retryable) {
         return ResponseEntity.status(status).body(Map.of("code", status, "message", message == null ? "提交被拒绝" : message,
                 "errorType", type, "retryable", retryable));

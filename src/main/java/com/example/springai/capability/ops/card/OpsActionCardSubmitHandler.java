@@ -6,11 +6,13 @@ import com.example.springai.capability.ops.port.OpsActionPort;
 import com.example.springai.core.card.CardSubmitHandler;
 import com.example.springai.core.card.action.ApprovedCardSubmission;
 import com.example.springai.core.card.dto.CardSubmitResult;
+import com.example.springai.core.card.model.CardRecord;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /** 原始 HTTP DTO 不能传入执行器；纯参数预检在 ActionGate 申领之前完成。 */
@@ -33,6 +35,16 @@ public class OpsActionCardSubmitHandler implements CardSubmitHandler {
         return CardSubmitResult.ok(result.getTicketId(), (isSimulation() ? "模拟执行（未变更真实系统）：" : "")
                 + (result.getAuditMessage() == null ? "" : result.getAuditMessage()));
     }
+    @Override
+    public Optional<CardSubmitResult> reconcile(CardRecord record) {
+        if (record == null) return Optional.empty();
+        String key = record.getEffectiveIdempotencyKey();
+        return port.findExecutedResult(key)
+                .filter(r -> r != null && r.isSuccess() && r.getTicketId() != null && !r.getTicketId().isBlank())
+                .map(r -> CardSubmitResult.ok(r.getTicketId(),
+                        (isSimulation() ? "模拟执行（对账恢复）：" : "对账恢复：")
+                                + (r.getAuditMessage() == null ? "" : r.getAuditMessage())));
+    }
     private static OpsActionParam parameters(ApprovedCardSubmission submission) {
         Map<String, Object> values = submission.getFormValues();
         String action = required(values, "action_type");
@@ -53,10 +65,12 @@ public class OpsActionCardSubmitHandler implements CardSubmitHandler {
             throw new IllegalArgumentException("扩容动作缺少 max_pool_size");
         }
         String reason = values.get("remark") instanceof String text && !text.isBlank() ? text : "人工确认";
+        String idemKey = submission.getIdempotencyKey() != null && !submission.getIdempotencyKey().isBlank()
+                ? submission.getIdempotencyKey() : submission.getActionId();
         return OpsActionParam.builder().service(required(values, "service")).actionType(action)
                 .targetIdentifier(required(values, "target_identifier")).maxPoolSize(pool)
                 .reason("actionId=" + submission.getActionId() + "; " + reason)
-                .operator(submission.getActorId()).idempotencyKey(submission.getActionId()).build();
+                .operator(submission.getActorId()).idempotencyKey(idemKey).build();
     }
     private static String required(Map<String, Object> values, String key) {
         if (!(values.get(key) instanceof String text) || text.isBlank()) throw new IllegalArgumentException("缺少有效执行参数: " + key);

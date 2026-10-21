@@ -273,5 +273,66 @@ CREATE TABLE IF NOT EXISTS `sys_faq_definition` (
   KEY `idx_enabled_priority` (`is_enabled`, `priority`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='L2高频标准问与SOP知识向量库';
 
+-- -----------------------------------------------------------------------------
+-- 7. 动作提案与执行账本表 (sys_action_ledger) - 审批状态与执行状态分离
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `sys_action_ledger` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键自增ID',
+  `action_id` VARCHAR(128) NOT NULL COMMENT '动作提案唯一标识',
+  `session_id` VARCHAR(128) NOT NULL COMMENT '所属会话标识',
+  `turn_id` VARCHAR(128) DEFAULT NULL COMMENT '所属回合标识',
+  `card_type` VARCHAR(64) NOT NULL COMMENT '交互卡片类型（如 TROUBLESHOOT_ACTION）',
+  `title` VARCHAR(255) DEFAULT NULL COMMENT '提案标题',
+  `issuance_id` VARCHAR(64) NOT NULL COMMENT '服务端签发唯一版本号（用于 CAS 原子校验）',
+  `idempotency_key` VARCHAR(128) NOT NULL COMMENT '传递给外部执行系统的稳定幂等键',
+  `tool_version` VARCHAR(64) NOT NULL DEFAULT 'v1' COMMENT '签发时锁定的工具/处理器版本',
+  `approval_state` VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT '审批状态：PENDING, APPROVED, REJECTED, EXPIRED, CANCELLED',
+  `execution_state` VARCHAR(32) NOT NULL DEFAULT 'NOT_STARTED' COMMENT '执行状态：NOT_STARTED, EXECUTING, SUCCEEDED, FAILED, EXECUTION_UNKNOWN',
+  `card_state` VARCHAR(32) NOT NULL DEFAULT 'ISSUED' COMMENT '综合状态：ISSUED, SUBMITTING, SUBMITTED, FAILED, EXPIRED, CANCELLED, EXECUTION_UNKNOWN',
+  `snapshot_json` MEDIUMTEXT NOT NULL COMMENT '签发时的卡片结构与只读字段完整快照 JSON',
+  `submitted_values_json` MEDIUMTEXT DEFAULT NULL COMMENT '经校验合并后的最终提交参数 JSON',
+  `actor_id` VARCHAR(128) DEFAULT NULL COMMENT '实际执行审批的操作人 Principal',
+  `ticket_id` VARCHAR(128) DEFAULT NULL COMMENT '外部系统执行成功回执单号',
+  `fail_reason` VARCHAR(512) DEFAULT NULL COMMENT '失败、取消或结果未知原因说明',
+  `issue_time` BIGINT NOT NULL COMMENT '签发时间戳(ms)',
+  `expire_at` BIGINT NOT NULL COMMENT '过期时间戳(ms)',
+  `submit_time` BIGINT DEFAULT NULL COMMENT '提交或终态流转时间戳(ms)',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_action_id` (`action_id`),
+  KEY `idx_session_turn` (`session_id`, `turn_id`),
+  KEY `idx_card_state` (`card_state`, `expire_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='ActionGate 动作提案审批与执行持久化账本表';
+
+-- -----------------------------------------------------------------------------
+-- 8. 回合挂起与恢复检查点表 (sys_turn_checkpoint)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `sys_turn_checkpoint` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键自增ID',
+  `turn_id` VARCHAR(128) NOT NULL COMMENT '回合唯一标识',
+  `session_id` VARCHAR(128) NOT NULL COMMENT '所属会话标识',
+  `user_id` VARCHAR(128) DEFAULT NULL COMMENT '用户标识',
+  `turn_state` VARCHAR(32) NOT NULL DEFAULT 'WAITING_APPROVAL' COMMENT '回合状态：RUNNING, WAITING_APPROVAL, RESUMING, COMPLETED, CANCELLED, EXPIRED, FAILED',
+  `original_query` TEXT NOT NULL COMMENT '用户原始输入',
+  `effective_query` TEXT DEFAULT NULL COMMENT '改写后的有效输入',
+  `pending_action_id` VARCHAR(128) NOT NULL COMMENT '正在等待确认的动作提案 ID',
+  `expected_issuance_id` VARCHAR(64) NOT NULL COMMENT '预期签发版本号',
+  `expected_tool_version` VARCHAR(64) NOT NULL DEFAULT 'v1' COMMENT '挂起时锁定的工具版本',
+  `route_steps_json` MEDIUMTEXT DEFAULT NULL COMMENT '路由计划步骤快照 JSON',
+  `completed_steps_json` MEDIUMTEXT DEFAULT NULL COMMENT '已完成步骤 StepResult 快照 JSON',
+  `suspended_step_order` INT NOT NULL DEFAULT 1 COMMENT '挂起所在步骤序号',
+  `total_steps` INT NOT NULL DEFAULT 1 COMMENT '计划总步骤数',
+  `ticket_id` VARCHAR(128) DEFAULT NULL COMMENT '恢复执行后的关联单号',
+  `resume_outcome` VARCHAR(512) DEFAULT NULL COMMENT '恢复或终止结论摘要',
+  `expire_at` BIGINT NOT NULL COMMENT '检查点过期时间戳(ms)',
+  `created_at` BIGINT NOT NULL COMMENT '创建时间戳(ms)',
+  `updated_at` BIGINT NOT NULL COMMENT '更新时间戳(ms)',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_turn_id` (`turn_id`),
+  UNIQUE KEY `uk_pending_action_id` (`pending_action_id`),
+  KEY `idx_session_state` (`session_id`, `turn_state`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='等待人工确认回合的持久化检查点表';
+
 SET FOREIGN_KEY_CHECKS = 1;
 

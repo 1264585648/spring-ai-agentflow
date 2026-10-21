@@ -3,8 +3,12 @@ package com.example.springai.core.pipeline.impl;
 import com.example.springai.core.agent.GeneralChatAgent;
 import com.example.springai.core.agent.SubAgent;
 import com.example.springai.core.card.CardRegistry;
+import com.example.springai.core.card.model.CardRecord;
 import com.example.springai.core.context.AgentContext;
 import com.example.springai.core.context.StepResult;
+import com.example.springai.core.context.TurnCheckpoint;
+import com.example.springai.core.context.TurnCheckpointStore;
+import com.example.springai.core.context.TurnState;
 import com.example.springai.core.event.CancellableAgentEventSink;
 import com.example.springai.core.event.SessionDisconnectedEvent;
 import com.example.springai.core.memory.ConversationMemory;
@@ -41,24 +45,32 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
     private final CardRegistry cards;
     private final ConversationMemory memory;
     private final QueryRewriter rewriter;
+    private final TurnCheckpointStore checkpointStore;
     private final TurnTaskSupervisor supervisor;
     private volatile long turnTimeoutMillis=DEFAULT_TURN_TIMEOUT_MS;
     @Autowired
     public AgentPipelineServiceImpl(SseEventPublisher publisher,List<IntentResolver> resolvers,L1ToolDispatcher tools,
             List<SubAgent> agents,GeneralChatAgent general,CardRegistry cards,
             @Autowired(required=false) ConversationMemory memory,@Autowired(required=false) QueryRewriter rewriter,
+            @Autowired(required=false) TurnCheckpointStore checkpointStore,
             @Qualifier("agentPipelineExecutor") Executor executor) {
         this.publisher=publisher; this.resolvers=resolvers==null?List.of():List.copyOf(resolvers);
         this.tools=tools; this.agents=agents==null?List.of():List.copyOf(agents); this.general=general;
-        this.cards=cards; this.memory=memory; this.rewriter=rewriter; this.supervisor=new TurnTaskSupervisor(executor);
+        this.cards=cards; this.memory=memory; this.rewriter=rewriter; this.checkpointStore=checkpointStore;
+        this.supervisor=new TurnTaskSupervisor(executor);
+    }
+    public AgentPipelineServiceImpl(SseEventPublisher publisher,List<IntentResolver> resolvers,L1ToolDispatcher tools,
+            List<SubAgent> agents,GeneralChatAgent general,CardRegistry cards,
+            ConversationMemory memory,QueryRewriter rewriter,Executor executor) {
+        this(publisher,resolvers,tools,agents,general,cards,memory,rewriter,null,executor);
     }
     public AgentPipelineServiceImpl(SseEventPublisher p,List<IntentResolver> r,L1ToolDispatcher t,List<SubAgent> a,
-            GeneralChatAgent g,CardRegistry c,Executor e) { this(p,r,t,a,g,c,null,null,e); }
+            GeneralChatAgent g,CardRegistry c,Executor e) { this(p,r,t,a,g,c,null,null,null,e); }
     public AgentPipelineServiceImpl(SseEventPublisher p,List<IntentResolver> r,L1ToolDispatcher t,List<SubAgent> a,
-            GeneralChatAgent g,Executor e) { this(p,r,t,a,g,null,null,null,e); }
+            GeneralChatAgent g,Executor e) { this(p,r,t,a,g,null,null,null,null,e); }
     public AgentPipelineServiceImpl(SseEventPublisher p,L1RuleMatcher matcher,L1ToolDispatcher t,MasterAgentRouter router,
             List<SubAgent> a,GeneralChatAgent g,Executor e) {
-        this(p,List.of(new L1RuleResolver(matcher),new L3MasterAgentResolver(router)),t,a,g,null,null,null,e);
+        this(p,List.of(new L1RuleResolver(matcher),new L3MasterAgentResolver(router)),t,a,g,null,null,null,null,e);
     }
     public void setTurnTimeoutMillis(long value) { turnTimeoutMillis=value>0?value:DEFAULT_TURN_TIMEOUT_MS; }
     public int getActiveTurnCount() { return supervisor.activeCount(); }
@@ -67,7 +79,21 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
     public long getCancelledTurnCount() { return supervisor.cancelledCount(); }
     @Override public boolean cancelActiveTurn(String sessionId) { return sessionId!=null && supervisor.cancel(sessionId); }
     @Override public boolean cancelActiveTurn(String sessionId,String turnId) {
-        return sessionId!=null && supervisor.cancel(sessionId,turnId);
+        if(sessionId==null || turnId==null) return false;
+        boolean runningCancelled = supervisor.cancel(sessionId,turnId);
+        boolean checkpointCancelled = false;
+        if(checkpointStore!=null) {
+            Optional<TurnCheckpoint> cancelledCp = checkpointStore.cancelByTurnId(sessionId,turnId,"用户取消回合");
+            if(cancelledCp.isPresent()) {
+                checkpointCancelled = true;
+                String pendingActionId = cancelledCp.get().getPendingActionId();
+                if(cards!=null && !blank(pendingActionId)) {
+                    try { cards.cancel(pendingActionId,sessionId,"关联回合已取消"); }
+                    catch(RuntimeException ignored) { }
+                }
+            }
+        }
+        return runningCancelled || checkpointCancelled;
     }
     @EventListener public void onDisconnected(SessionDisconnectedEvent event) { cancelActiveTurn(event.getSessionId()); }
     @PreDestroy @Override public void close() { supervisor.close(); }
@@ -102,6 +128,7 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
                 ensureActive(context); Optional<Resolution> result=resolver.resolve(context); ensureActive(context);
                 if(result.isPresent()) { resolution=result.get(); break; }
             }
+            List<DispatchStep> plannedSteps=List.of();
             if(resolution instanceof Resolution.DirectReply direct) {
                 context.getSink().progress("L1".equals(direct.level())?"L1_HIT":"DIRECT_REPLY","已命中快捷回复");
                 text(context,direct.text());
@@ -109,18 +136,48 @@ public class AgentPipelineServiceImpl implements AgentPipelineService,AutoClosea
                 context.getSink().progress("L1".equals(tool.level())?"L1_TOOL":"TOOL_CALL","正在调用工具: "+tool.toolRef());
                 ensureActive(context); String value=tools.dispatch(tool.toolRef(),tool.jsonArgs()); ensureActive(context); text(context,value);
             } else if(resolution instanceof Resolution.Route route) {
+                plannedSteps=route.steps()!=null?route.steps():List.of();
                 context.getSink().thinking("MasterAgent 正在分析诉求并规划调度链路: "+route.reason());
                 executeRoute(context,route);
             } else { executeStep(context,general,null); }
             ensureActive(context);
-            if(context.hasFailedStep()) context.getSink().error("STEP_FAILED: 依赖步骤执行失败，本回合未完成");
-            else context.getSink().done();
+            if(context.hasFailedStep()) {
+                context.getSink().error("STEP_FAILED: 依赖步骤执行失败，本回合未完成");
+            } else {
+                suspendIfWaitingApproval(context,plannedSteps);
+                context.getSink().done();
+            }
         } catch(TurnAborted ex) {
             context.cancel(); context.getSink().error(ex.getMessage());
         } catch(Exception ex) {
             log.warn("[Pipeline] 回合执行失败 turnId={}",context.getTurnId(),ex);
             context.getSink().error(context.isCancelled()?"TURN_CANCELLED: 本回合已停止":"PIPELINE_FAILED: 处理失败，请检查服务状态");
         }
+    }
+    private void suspendIfWaitingApproval(AgentContext context,List<DispatchStep> plannedSteps) {
+        if(checkpointStore==null || blank(context.getPendingActionId())) return;
+        Optional<CardRecord> cardRecord = cards!=null ? cards.getRecord(context.getPendingActionId()) : Optional.empty();
+        long now = System.currentTimeMillis();
+        TurnCheckpoint checkpoint = TurnCheckpoint.builder()
+                .turnId(context.getTurnId())
+                .sessionId(context.getSessionId())
+                .userId(context.getUserId())
+                .turnState(TurnState.WAITING_APPROVAL)
+                .originalQuery(context.getQuery())
+                .effectiveQuery(context.getEffectiveQuery())
+                .pendingActionId(context.getPendingActionId())
+                .expectedIssuanceId(cardRecord.map(CardRecord::getIssuanceId).orElse(null))
+                .expectedToolVersion(cardRecord.map(CardRecord::getEffectiveToolVersion).orElse("v1"))
+                .routeSteps(new ArrayList<>(plannedSteps))
+                .completedSteps(new ArrayList<>(context.getStepResults()))
+                .suspendedStepOrder(Math.max(1,context.getStepResults().size()))
+                .totalSteps(context.getTotalSteps())
+                .expireAt(cardRecord.map(CardRecord::getExpireAt).orElse(now+15*60*1000L))
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
+        checkpointStore.saveWaitingApproval(checkpoint);
+        log.info("[Pipeline] 回合已保存检查点并进入挂起等待确认态 turnId={}, actionId={}",context.getTurnId(),context.getPendingActionId());
     }
     private void executeRoute(AgentContext context,Resolution.Route route) {
         if(route.planType()==PlanType.FALLBACK) {

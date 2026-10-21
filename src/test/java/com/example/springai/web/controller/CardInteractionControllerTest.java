@@ -92,4 +92,30 @@ class CardInteractionControllerTest {
         assertEquals(403,res.getStatusCode().value());
         assertEquals(CardState.ISSUED,registry.getRecord("a").orElseThrow().getState());
     }
+    @Test void reconcileCardRecoversUnknownStateWithoutReExecuting() {
+        var request = issue();
+        CardSubmitHandler reconcilable = new CardSubmitHandler() {
+            public boolean supports(String type) { return "TEST".equals(type); }
+            public boolean isSimulation() { return true; }
+            public CardSubmitResult handleSubmit(ApprovedCardSubmission approved) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("remote succeeded, response timed out");
+            }
+            public Optional<CardSubmitResult> reconcile(CardRecord record) {
+                return Optional.of(CardSubmitResult.ok("T-RECONCILED-1", "对账恢复成功"));
+            }
+        };
+        var controller = new CardInteractionController(
+                new ActionGate(registry, List.of(reconcilable), ActionAuthorizer.DENY_ALL, true, false), publisher);
+        var failed = controller.submitCard(request, null);
+        assertEquals(500, failed.getStatusCode().value());
+        assertEquals(CardState.EXECUTION_UNKNOWN, registry.getRecord("a").orElseThrow().getState());
+
+        var reconciled = controller.reconcileCard(Map.of("actionId", "a", "sessionId", "s"), null);
+        assertEquals(200, reconciled.getStatusCode().value());
+        assertEquals("T-RECONCILED-1", reconciled.getBody().get("ticketId"));
+        assertEquals("SUBMITTED", reconciled.getBody().get("state"));
+        assertEquals(CardState.SUBMITTED, registry.getRecord("a").orElseThrow().getState());
+        assertEquals(1, calls.get(), "对账恢复严禁重复触发 handleSubmit");
+    }
 }

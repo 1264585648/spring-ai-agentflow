@@ -18,13 +18,23 @@ public final class ApprovedCardSubmission {
     private final String cardType;
     private final String actorId;
     private final Map<String, Object> formValues;
+    private final String idempotencyKey;
+    private final String toolVersion;
 
     ApprovedCardSubmission(String actionId, String sessionId, String cardType,
                            String actorId, Map<String, Object> formValues) {
+        this(actionId, sessionId, cardType, actorId, formValues, actionId, "v1");
+    }
+
+    ApprovedCardSubmission(String actionId, String sessionId, String cardType,
+                           String actorId, Map<String, Object> formValues,
+                           String idempotencyKey, String toolVersion) {
         this.actionId = actionId;
         this.sessionId = sessionId;
         this.cardType = cardType;
         this.actorId = actorId;
         this.formValues = Collections.unmodifiableMap(new LinkedHashMap<>(formValues));
+        this.idempotencyKey = (idempotencyKey == null || idempotencyKey.isBlank()) ? actionId : idempotencyKey;
+        this.toolVersion = (toolVersion == null || toolVersion.isBlank()) ? "v1" : toolVersion;
     }
 }

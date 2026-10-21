@@ -86,6 +86,11 @@ public class AgentContext {
     @Builder.Default
     private long deadlineMillis = 0L;
 
+    /**
+     * 当前回合下发并处于等待人工确认的卡片动作 ID（挂起检查点关联键）
+     */
+    private String pendingActionId;
+
     public AgentContext(
             String sessionId,
             String turnId,
@@ -107,6 +112,7 @@ public class AgentContext {
         this.totalSteps = 1;
         this.cancelled = false;
         this.deadlineMillis = 0L;
+        this.pendingActionId = null;
     }
 
     /**
